@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Research Agent · Knowledge Graph</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=DM+Mono:ital,wght@0,300;0,400;0,500;1,300&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet">
+  </head>
+<body>
+  <div class="layout">
+    <header>
+      <div class="logo">RESEARCH<span>/</span>AGENT</div>
+      <div style="font-size:11px;color:var(--muted);margin-left:8px">knowledge graph + RAG · gemini-powered</div>
+      <div class="header-status">
+        <span><span class="status-dot" id="statusDot"></span><span id="statusText">connecting…</span></span>
+        <span id="modelBadge" style="color:var(--accent2)">—</span>
+      </div>
+  </header>
+  <aside>
+  <div class="section-label">Navigation</div>
+  <button class="nav-btn active" onclick="switchTab('query',this)"><span class="icon">⬡</span> Query</button>
+  <button class="nav-btn" onclick="switchTab('ingest',this)"><span class="icon">↑</span> Ingest</button>
+  <button class="nav-btn" onclick="switchTab('log',this)"><span class="icon">≡</span> Activity Log</button>
+  <div class="section-label" style="margin-top:16px">Graph Stats</div>
+  <div class="stat-card">
+    <div style="font-size:10px;color:var(--muted)">Live counts</div>
+    <div class="stat-grid">
+      <div class="stat-item"><div class="stat-value" id="statEntities">—</div><div class="stat-label">entities</div></div>
+      <div class="stat-item"><div class="stat-value" id="statRelations">—</div><div class="stat-label">relations</div></div>
+      <div class="stat-item"><div class="stat-value" id="statPapers">—</div><div class="stat-label">papers</div></div>
+      <div class="stat-item"><div class="stat-value" id="statVectors">—</div><div class="stat-label">vectors</div></div>
+    </div>
+    <button class="btn-secondary" style="width:100%;margin-top:10px;font-size:11px" onclick="refreshStats()">↻ Refresh</button>
+  </div>
+</aside>
+<main>
+  <div class="api-url-bar">
+    <span style="color:var(--muted)">API</span>
+    <input type="text" id="apiUrl" value="http://localhost:8000">
+    <button class="btn-secondary" style="padding:5px 12px;font-size:11px" onclick="checkHealth()">ping</button>
+  </div>
+  <!-- Query Tab -->
+  <div class="tab-content active" id="tab-query">
+    <div class="chat-area" id="chatArea">
+      <div class="empty-state"><div class="empty-icon">⬡</div><div>Ask a research question</div><div style="margin-top:6px;font-size:11px">e.g. "What methods does GPT-4 outperform?" or "Recent trends in RAG?"</div></div>
+    </div>
+    <div class="input-bar">
+      <div class="input-wrap">
+        <textarea id="queryInput" placeholder="Ask a question about your research graph…" rows="1"
+          onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendQuery()}"
+          oninput="this.style.height='auto';this.style.height=this.scrollHeight+'px'"></textarea>
+      </div>
+      <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:11px;color:var(--muted);white-space:nowrap">
+        <input type="checkbox" id="includeCtx" style="accent-color:var(--accent)"> context
+      </label>
+      <button class="btn-send" id="sendBtn" onclick="sendQuery()">SEND</button>
+    </div>
+  </div>
+  <!-- Ingest Tab -->
+  <div class="tab-content" id="tab-ingest">
+    <div class="ingest-area">
+      <div class="ingest-card">
+        <h3>↑ arXiv Ingest</h3>
+        <div class="form-group"><label>SEARCH QUERY</label><input type="text" id="arxivQuery" placeholder="e.g. retrieval augmented generation 2024"></div>
+        <div class="form-group"><label>MAX RESULTS</label><input type="number" id="arxivMax" value="5" min="1" max="50" style="width:100px"></div>
+        <button class="btn-primary" onclick="ingestArxiv()">FETCH + INGEST</button>
+        <div class="ingest-result" id="arxivResult"></div>
+      </div>
+      <div class="ingest-card">
+        <h3>✎ Text Ingest</h3>
+        <div class="form-group"><label>DOCUMENT TITLE</label><input type="text" id="textTitle" placeholder="My Research Note"></div>
+        <div class="form-group"><label>DOC ID (optional)</label><input type="text" id="textDocId" placeholder="auto-generated if blank"></div>
+        <div class="form-group"><label>CONTENT</label><textarea id="textContent" placeholder="Paste or type research text here…"></textarea></div>
+        <button class="btn-primary" onclick="ingestText()">EXTRACT + INGEST</button>
+        <div class="ingest-result" id="textResult"></div>
+      </div>
+    </div>
+  </div>
+  <!-- Log Tab -->
+  <div class="tab-content" id="tab-log">
+    <div class="log-area" id="logArea">
+      <div class="empty-state"><div class="empty-icon">≡</div><div>Activity will appear here</div></div>
+    </div>
+  </div>
+</main>
+</div>
+</body>
+</html>
