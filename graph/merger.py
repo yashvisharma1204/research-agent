@@ -26,8 +26,19 @@ def _get_embed_model() -> SentenceTransformer:
     return _embed_model
 
 class KGMerger:
+    """
+    Merges entities and triples into Neo4j.
+
+    Entity resolution strategy:
+    1. Exact name+type match → reuse existing node (via MERGE)
+    2. Fuzzy embedding similarity above threshold → merge into existing node
+    3. No match → create new node
+    """
+
     def __init__(self, driver: Driver):
         self.driver = driver
+
+    # ── Entity upsert ─────────────────────────────────────────────────────────
 
     def upsert_entity(
         self,
@@ -35,7 +46,10 @@ class KGMerger:
         entity_type: str,
         properties: dict | None = None,
     ) -> str:
-        
+        """
+        Insert or update an entity node.
+        Returns the canonical name used in the graph.
+        """
         properties = properties or {}
         canonical = self._resolve_entity(name, entity_type)
 
@@ -51,13 +65,20 @@ class KGMerger:
             return record["name"] if record else canonical
 
     def _resolve_entity(self, name: str, entity_type: str) -> str:
+        """
+        Look for an existing entity that is semantically equivalent to *name*.
+        Returns the canonical name to use (existing or new).
+        """
+        # Quick exact check first (avoids loading embedding model unnecessarily)
         with self.driver.session() as s:
             exact = s.run(
                 "MATCH (e:Entity {name: $name, type: $type}) RETURN e.name LIMIT 1",
                 name=name, type=entity_type,
             ).single()
             if exact:
-                return name
+                return name   # already exists verbatim
+
+        # Fuzzy check via sentence embeddings
         with self.driver.session() as s:
             candidates = s.run(
                 "MATCH (e:Entity {type: $type}) RETURN e.name AS name LIMIT 500",
@@ -82,7 +103,9 @@ class KGMerger:
             )
             return canonical
 
-        return name 
+        return name   # new entity
+
+    # ── Triple upsert ─────────────────────────────────────────────────────────
 
     def upsert_triple(
         self,
@@ -92,7 +115,11 @@ class KGMerger:
         source_paper: str,
         confidence: float = 1.0,
     ) -> None:
-
+        """
+        Merge a (subject)-[predicate]->(object) triple.
+        - Confidence is averaged across all sources.
+        - Source list grows with each new paper confirming the relationship.
+        """
         cypher = """
         MERGE (s:Entity {name: $subj}) ON CREATE SET s.type = 'unknown', s.created = timestamp()
         MERGE (o:Entity {name: $obj}) ON CREATE SET o.type = 'unknown', o.created = timestamp()
@@ -112,6 +139,7 @@ class KGMerger:
         with self.driver.session() as s:
             s.run(cypher, subj=subj, obj=obj, pred=pred, src=source_paper, conf=confidence)
 
+    # ── Bulk operations ───────────────────────────────────────────────────────
 
     def get_stats(self) -> dict:
         """Return node and relationship counts."""
