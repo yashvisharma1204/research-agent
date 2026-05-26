@@ -1,0 +1,24 @@
+# Core
+google-generativeai>=0.8.0
+fastapi>=0.110.0
+uvicorn[standard]>=0.29.0
+python-dotenv>=1.0.0
+
+# Ingestion
+arxiv>=2.1.0
+httpx>=0.27.0
+feedparser>=6.0.11
+
+# Graph database
+neo4j>=5.19.0
+
+# Vector store
+faiss-cpu>=1.8.0
+numpy>=1.26.0
+
+# Embeddings (small, ~90MB)
+sentence-transformers>=2.7.0
+
+# API
+pydantic>=2.7.0
+tenacity>=8.3.0
