@@ -8,6 +8,8 @@
 
 </div>
 
+**[Home](#)** | [Usage](USAGE.md) | [Contributing]()
+
 ---
 
 Most RAG systems are frozen in time — you feed them documents once and they stay dumb. This one doesn't. Every few hours it reaches out to arXiv and RSS feeds, pulls the latest papers on topics you care about, extracts structured knowledge triples, and weaves them into a live Neo4j graph. Ask it a question tomorrow and it knows things it didn't know today.
@@ -17,3 +19,4 @@ Most RAG systems are frozen in time — you feed them documents once and they st
 <div align="center">
 <sub>Built with Gemini · Neo4j · FAISS · FastAPI · Prefect</sub>
 </div>
+
