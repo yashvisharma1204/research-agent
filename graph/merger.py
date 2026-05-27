@@ -12,18 +12,10 @@ import numpy as np
 from neo4j import Driver
 
 from config import cfg
+from utils.embedder import encode as _encode
 
 logger = logging.getLogger(__name__)
 
-_embed_model = None
-
-
-def _get_embed_model():
-    global _embed_model
-    if _embed_model is None:
-        from sentence_transformers import SentenceTransformer
-        _embed_model = SentenceTransformer("all-MiniLM-L6-v2")
-    return _embed_model
 
 class KGMerger:
     """
@@ -89,9 +81,8 @@ class KGMerger:
             return name
 
         candidate_names = [c["name"] for c in candidates]
-        model = _get_embed_model()
-        query_emb = model.encode(name, normalize_embeddings=True)
-        cand_embs = model.encode(candidate_names, normalize_embeddings=True)
+        query_emb = _encode(name)[0]
+        cand_embs = _encode(candidate_names)
 
         sims = cand_embs @ query_emb   # cosine similarity (normalized)
         best_idx = int(np.argmax(sims))
