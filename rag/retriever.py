@@ -26,7 +26,7 @@ _FAISS_INDEX_PATH = Path("data/faiss.index")
 _FAISS_META_PATH = Path("data/faiss_meta.pkl")
 _EMBED_MODEL_NAME = "all-MiniLM-L6-v2"
 
-_embed_model: SentenceTransformer | None = None
+_embed_model = None
 
 
 def _model():
