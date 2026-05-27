@@ -10,18 +10,18 @@ import logging
 
 import numpy as np
 from neo4j import Driver
-from sentence_transformers import SentenceTransformer
 
 from config import cfg
 
 logger = logging.getLogger(__name__)
 
-_embed_model: SentenceTransformer | None = None
+_embed_model = None
 
 
-def _get_embed_model() -> SentenceTransformer:
+def _get_embed_model():
     global _embed_model
     if _embed_model is None:
+        from sentence_transformers import SentenceTransformer
         _embed_model = SentenceTransformer("all-MiniLM-L6-v2")
     return _embed_model
 
