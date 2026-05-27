@@ -16,7 +16,6 @@ from typing import NamedTuple
 import faiss
 import numpy as np
 from neo4j import Driver
-from sentence_transformers import SentenceTransformer
 
 from config import cfg
 from rag.router import route_query
@@ -30,12 +29,12 @@ _EMBED_MODEL_NAME = "all-MiniLM-L6-v2"
 _embed_model: SentenceTransformer | None = None
 
 
-def _model() -> SentenceTransformer:
+def _model():
     global _embed_model
     if _embed_model is None:
+        from sentence_transformers import SentenceTransformer
         _embed_model = SentenceTransformer(_EMBED_MODEL_NAME)
     return _embed_model
-
 
 # ── Data types ─────────────────────────────────────────────────────────────────
 
