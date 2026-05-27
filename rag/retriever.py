@@ -19,6 +19,7 @@ from neo4j import Driver
 
 from config import cfg
 from rag.router import route_query
+from utils.embedder import encode as _encode
 
 logger = logging.getLogger(__name__)
 
@@ -26,15 +27,7 @@ _FAISS_INDEX_PATH = Path("data/faiss.index")
 _FAISS_META_PATH = Path("data/faiss_meta.pkl")
 _EMBED_MODEL_NAME = "all-MiniLM-L6-v2"
 
-_embed_model = None
 
-
-def _model():
-    global _embed_model
-    if _embed_model is None:
-        from sentence_transformers import SentenceTransformer
-        _embed_model = SentenceTransformer(_EMBED_MODEL_NAME)
-    return _embed_model
 
 # ── Data types ─────────────────────────────────────────────────────────────────
 
@@ -89,7 +82,7 @@ class VectorStore:
     def add(self, texts: list[str], doc_ids: list[str]):
         if not texts:
             return
-        embs = _model().encode(texts, normalize_embeddings=True).astype("float32")
+        embs = _encode(texts)
         self._index.add(embs)
         self._meta.extend({"text": t, "doc_id": d} for t, d in zip(texts, doc_ids))
         self._save()
@@ -98,7 +91,7 @@ class VectorStore:
     def search(self, query: str, k: int = 5) -> list[VectorResult]:
         if self._index.ntotal == 0:
             return []
-        q_emb = _model().encode([query], normalize_embeddings=True).astype("float32")
+        q_emb = _encode([query])
         scores, indices = self._index.search(q_emb, min(k, self._index.ntotal))
         results = []
         for score, idx in zip(scores[0], indices[0]):
