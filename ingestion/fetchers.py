@@ -14,7 +14,7 @@ from typing import Generator
 import arxiv
 import feedparser
 import httpx
-import fitz  # PyMuPDF
+# import fitz  
 
 logger = logging.getLogger(__name__)
 
