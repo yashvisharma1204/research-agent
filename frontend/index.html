@@ -122,6 +122,46 @@
   .api-url-bar{padding:10px 24px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;font-size:11px;background:var(--surface)}
   .api-url-bar input{flex:1;background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:11px;color:var(--muted)}
   .ctx-label{color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.1em;margin-bottom:4px}
+  .path-area{flex:1;overflow-y:auto;padding:32px 40px}
+.path-search{display:flex;gap:10px;margin-bottom:32px;max-width:600px}
+.path-search input{flex:1;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:12px 16px;font-family:'DM Mono',monospace;font-size:13px;color:var(--text);outline:none;transition:border-color .2s}
+.path-search input:focus{border-color:rgba(255,255,255,.35)}
+.path-overview{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:20px 24px;margin-bottom:28px;font-size:13px;line-height:1.7;color:var(--muted)}
+.path-overview strong{color:var(--text);font-family:'Syne',sans-serif;font-size:16px;display:block;margin-bottom:8px}
+.path-skills{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px}
+.path-skill{padding:3px 10px;background:rgba(100,192,226,.1);border:1px solid rgba(100,192,226,.2);border-radius:20px;font-size:10px;color:var(--accent2)}
+.path-stage{margin-bottom:32px}
+.stage-header{display:flex;align-items:center;gap:12px;margin-bottom:16px}
+.stage-number{width:28px;height:28px;border-radius:50%;background:rgba(255,255,255,.08);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-family:'Syne',sans-serif;font-weight:700;font-size:12px;color:var(--accent);flex-shrink:0}
+.stage-name{font-family:'Syne',sans-serif;font-weight:700;font-size:14px;color:var(--text)}
+.stage-desc{font-size:11px;color:var(--muted);margin-left:40px;margin-bottom:12px}
+.path-papers{display:flex;flex-direction:column;gap:12px;margin-left:40px}
+
+/* Paper card in learning path */
+.path-paper{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:18px 20px;display:grid;grid-template-columns:auto 1fr auto;gap:16px;align-items:start;transition:border-color .2s;cursor:default}
+.path-paper:hover{border-color:rgba(255,255,255,.15)}
+.paper-order{font-family:'Syne',sans-serif;font-weight:800;font-size:22px;color:rgba(255,255,255,.12);line-height:1;padding-top:2px;min-width:28px;text-align:right}
+.paper-title{font-family:'Syne',sans-serif;font-weight:700;font-size:13px;color:var(--text);margin-bottom:6px}
+.paper-title a{color:var(--accent2);text-decoration:none}
+.paper-title a:hover{text-decoration:underline}
+.paper-reason{font-size:12px;color:var(--muted);line-height:1.6;margin-bottom:8px}
+.paper-concepts{display:flex;flex-wrap:wrap;gap:5px}
+.paper-concept{padding:2px 8px;background:rgba(255,255,255,.04);border:1px solid var(--border);border-radius:3px;font-size:10px;color:var(--muted)}
+.paper-meta{display:flex;flex-direction:column;align-items:flex-end;gap:6px;flex-shrink:0}
+.difficulty-badge{padding:2px 8px;border-radius:3px;font-size:10px;font-weight:600}
+.diff-beginner{background:rgba(110,231,183,.12);color:#6ee7b7;border:1px solid rgba(110,231,183,.2)}
+.diff-intermediate{background:rgba(100,192,226,.12);color:var(--accent2);border:1px solid rgba(100,192,226,.2)}
+.diff-advanced{background:rgba(240,92,106,.12);color:var(--danger);border:1px solid rgba(240,92,106,.2)}
+.paper-year{font-size:11px;color:var(--muted)}
+.paper-read-time{font-size:10px;color:var(--muted)}
+
+/* Timeline connector */
+.path-connector{width:2px;height:20px;background:linear-gradient(to bottom,var(--border),transparent);margin-left:13px}
+
+/* Empty + loading states */
+.path-empty{text-align:center;padding:80px 20px;color:var(--muted)}
+.path-empty-icon{font-size:40px;margin-bottom:12px;opacity:.4}
+.path-loading{text-align:center;padding:60px 20px;color:var(--muted);font-size:13px}
   code{background:rgba(255,255,255,.07);padding:1px 6px;border-radius:4px;font-family:inherit;font-size:10px}
 </style>
 </head>
@@ -145,6 +185,9 @@
   <button class="nav-btn" onclick="switchTab('graph',this)"><span class="icon">◈</span> Graph</button>
   <button class="nav-btn" onclick="switchTab('ingest',this)"><span class="icon">↑</span> Ingest</button>
   <button class="nav-btn" onclick="switchTab('log',this)"><span class="icon">≡</span> Activity Log</button>
+  <button class="nav-btn" onclick="switchTab('path',this)">
+    <span class="icon">⟶</span> Learning Path
+  </button>
   <div class="section-label" style="margin-top:16px">Graph Stats</div>
   <div class="stat-card">
     <div style="font-size:10px;color:var(--muted)">Live counts</div>
@@ -162,7 +205,7 @@
 <main>
   <div class="api-url-bar">
     <span style="color:var(--muted)">API</span>
-    <input type="text" id="apiUrl" value="https://research-agent-s7ye.onrender.com">
+    <input type="text" id="apiUrl" value="http://localhost:8000" placeholder="Enter API URL and ping to test">
     <button class="btn-secondary" style="padding:5px 12px;font-size:11px" onclick="checkHealth()">ping</button>
   </div>
 
@@ -254,6 +297,29 @@
       <div class="empty-state"><div class="empty-icon">≡</div><div>Activity will appear here</div></div>
     </div>
   </div>
+  <div class="tab-content" id="tab-path">
+  <div class="path-area">
+    <div class="path-search">
+      <input type="text" id="pathTopic"
+        placeholder="e.g. rag, transformers, diffusion, fine tuning…"
+        onkeydown="if(event.key==='Enter')generatePath()">
+      <select id="pathMax" style="background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);padding:0 12px;font-family:'DM Mono',monospace;font-size:12px;color:var(--text);outline:none;cursor:pointer">
+        <option value="5">5 papers</option>
+        <option value="8" selected>8 papers</option>
+        <option value="12">12 papers</option>
+      </select>
+      <button class="btn-primary" onclick="generatePath()" id="pathBtn">GENERATE</button>
+    </div>
+    <div id="pathContent">
+      <div class="path-empty">
+        <div class="path-empty-icon">⟶</div>
+        <div>Enter a topic to generate your learning path</div>
+        <div style="margin-top:6px;font-size:11px">Papers will be fetched, analysed, and stored in your graph</div>
+      </div>
+    </div>
+  </div>
+</div>
+
 </main>
 </div>
 
@@ -514,7 +580,7 @@ function filterGraph(val) {
   renderGraph(allNodes.filter(n=>matchIds.has(n.id)), allLinks.filter(l=>{const s=l.source?.id??l.source,t=l.target?.id??l.target;return matchIds.has(s)&&matchIds.has(t);}));
 }
 
-function resetZoom() { if(svgSel&&zoomBehavior) svgSel.transition().duration(400).call(zoomBehavior.transform, d3.zoomIdentity); }
+function resetZoom(){if(svgSel&&zoomBehavior)svgSel.transition().duration(400).call(zoomBehavior.transform,d3.zoomIdentity);}
 
 // ══════════════════════════════════════════════════════
 //  INGEST
@@ -569,7 +635,127 @@ function addLog(level, msg) {
   entry.innerHTML='<span class="log-time">'+now+'</span><span class="log-level '+level+'">'+level.toUpperCase()+'</span><span class="log-msg">'+escHtml(msg)+'</span>';
   area.appendChild(entry); area.scrollTop=area.scrollHeight;
 }
+async function generatePath() {
+  const topic = document.getElementById('pathTopic').value.trim();
+  const max   = parseInt(document.getElementById('pathMax').value) || 8;
+  if (!topic) return;
 
+  const btn     = document.getElementById('pathBtn');
+  const content = document.getElementById('pathContent');
+  btn.disabled  = true;
+  btn.textContent = '…';
+
+  content.innerHTML = `
+    <div class="path-loading">
+      <span class="spinner"></span>
+      <div style="margin-top:14px">Fetching papers, analysing content, building graph…</div>
+      <div style="margin-top:6px;font-size:11px;color:var(--muted)">This takes ~30 seconds for ${max} papers</div>
+    </div>`;
+
+  addLog('info', `Learning path: "${topic}" max=${max}`);
+
+  try {
+    const r = await fetch(BASE() + '/learning-path', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ topic, max_papers: max }),
+    });
+
+    if (!r.ok) {
+      const err = await r.text();
+      throw new Error(`HTTP ${r.status}: ${err}`);
+    }
+
+    const data = await r.json();
+    renderLearningPath(data);
+    refreshStats();
+    addLog('info', `Learning path ready: ${data.total_papers} papers in ${data.stages.length} stages`);
+  } catch(e) {
+    content.innerHTML = `<div class="path-empty"><div class="path-empty-icon">✗</div><div style="color:var(--danger)">${escHtml(e.message)}</div></div>`;
+    addLog('error', 'Learning path failed: ' + e.message);
+  }
+
+  btn.disabled = false;
+  btn.textContent = 'GENERATE';
+}
+
+function renderLearningPath(data) {
+  const content = document.getElementById('pathContent');
+
+  // Skills pills
+  const skillsHtml = (data.what_you_will_learn || []).map(s =>
+    `<span class="path-skill">${escHtml(s)}</span>`
+  ).join('');
+
+  let html = `
+    <div class="path-overview">
+      <strong>${escHtml(data.topic)} — Learning Path</strong>
+      ${escHtml(data.overview)}
+      ${skillsHtml ? `<div class="path-skills">${skillsHtml}</div>` : ''}
+    </div>`;
+
+  let globalOrder = 1;
+
+  data.stages.forEach((stage, si) => {
+    if (!stage.papers || !stage.papers.length) return;
+
+    html += `
+      <div class="path-stage">
+        <div class="stage-header">
+          <div class="stage-number">${si + 1}</div>
+          <div class="stage-name">${escHtml(stage.name)}</div>
+        </div>
+        <div class="stage-desc">${escHtml(stage.description)}</div>
+        <div class="path-papers">`;
+
+    stage.papers.forEach((paper, pi) => {
+      const diffClass = {
+        beginner:     'diff-beginner',
+        intermediate: 'diff-intermediate',
+        advanced:     'diff-advanced',
+      }[paper.difficulty] || 'diff-intermediate';
+
+      const conceptsHtml = (paper.key_concepts || []).slice(0, 5).map(c =>
+        `<span class="paper-concept">${escHtml(c)}</span>`
+      ).join('');
+
+      const titleHtml = paper.url
+        ? `<a href="${escHtml(paper.url)}" target="_blank">${escHtml(paper.title)}</a>`
+        : escHtml(paper.title);
+
+      html += `
+        <div class="path-paper">
+          <div class="paper-order">${globalOrder}</div>
+          <div class="paper-body">
+            <div class="paper-title">${titleHtml}</div>
+            <div class="paper-reason">${escHtml(paper.reason)}</div>
+            ${conceptsHtml ? `<div class="paper-concepts">${conceptsHtml}</div>` : ''}
+          </div>
+          <div class="paper-meta">
+            <span class="difficulty-badge ${diffClass}">${paper.difficulty}</span>
+            ${paper.year ? `<span class="paper-year">${paper.year}</span>` : ''}
+            ${paper.estimated_read_time ? `<span class="paper-read-time">${escHtml(paper.estimated_read_time)}</span>` : ''}
+          </div>
+        </div>`;
+
+      // Connector between papers (not after last)
+      if (pi < stage.papers.length - 1) {
+        html += `<div class="path-connector"></div>`;
+      }
+
+      globalOrder++;
+    });
+
+    html += `</div></div>`;
+
+    // Connector between stages (not after last)
+    if (si < data.stages.length - 1) {
+      html += `<div class="path-connector" style="margin-left:13px;height:24px"></div>`;
+    }
+  });
+
+  content.innerHTML = html;
+}
 // ══════════════════════════════════════════════════════
 //  INIT
 // ══════════════════════════════════════════════════════
