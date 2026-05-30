@@ -147,6 +147,8 @@ async def ingest_arxiv_endpoint(req: IngestURLRequest):
 
         merger.upsert_entity(doc["title"], "Paper", {"url": doc.get("url", ""), "source": "arxiv"})
         for t in triples:
+            merger.upsert_entity(t.subject, t.subject_type, {})
+            merger.upsert_entity(t.obj, t.obj_type, {})
             merger.upsert_triple(t.subject, t.predicate, t.obj, doc["id"], t.confidence)
 
         retriever.index_document(doc)
@@ -165,6 +167,8 @@ async def ingest_text_endpoint(req: IngestTextRequest):
 
     merger.upsert_entity(req.title, "Document", {})
     for t in triples:
+        merger.upsert_entity(t.subject, t.subject_type, {})
+        merger.upsert_entity(t.obj, t.obj_type, {})
         merger.upsert_triple(t.subject, t.predicate, t.obj, doc_id, t.confidence)
 
     retriever.index_document({"id": doc_id, "title": req.title, "abstract": req.text[:2000]})
