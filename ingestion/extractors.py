@@ -22,9 +22,11 @@ logger = logging.getLogger(__name__)
 class Triple:
     subject: str
     predicate: str
-    obj: str          # 'object' is a Python builtin; use obj
+    obj: str
     confidence: float = 1.0
     source_id: str = ""
+    subject_type: str = "unknown"
+    obj_type: str = "unknown"
 
     def __repr__(self):
         return f"({self.subject}) --[{self.predicate}]--> ({self.obj})"
@@ -34,11 +36,29 @@ _SYSTEM_PROMPT = """You are a scientific knowledge graph extractor.
 Given a text, extract factual (subject, predicate, object) triples.
 
 Rules:
-- subjects and objects should be named entities: methods, models, datasets, concepts, authors, organisations
-- predicates should be specific verbs: proposes, outperforms, trained_on, published_by, cites, treats, inhibits, evaluates, uses_dataset, achieves_score_on, related_to
+- subjects and objects should be named entities
+- predicates should be specific verbs: proposes, outperforms, trained_on, 
+  published_by, cites, treats, uses_dataset, achieves_score_on, related_to,
+  introduces, evaluates, improves, builds_on
+- classify every subject and object into ONE of these types:
+    Method       — algorithms, techniques, approaches (RAG, LoRA, attention)
+    Model        — specific trained models (GPT-4, BERT, LLaMA)
+    Dataset      — datasets and benchmarks (SQuAD, MMLU, ImageNet)
+    Author       — person names (Lewis et al., Vaswani)
+    Organisation — companies/labs (OpenAI, Google DeepMind, Meta)
+    Metric       — evaluation metrics (BLEU, F1, perplexity, accuracy)
+    Concept      — abstract ideas (hallucination, grounding, fine-tuning)
+    Paper        — paper titles or paper references
+    Unknown      — if none of the above fit
 - return ONLY a valid JSON array, no markdown, no explanation
-- each element: {"subject": "...", "predicate": "...", "object": "...", "confidence": 0.0-1.0}
-- confidence reflects how certain the text is (1.0 = stated as fact, 0.6 = implied)"""
+- each element: {
+    "subject": "...",
+    "subject_type": "Method|Model|Dataset|Author|Organisation|Metric|Concept|Paper|Unknown",
+    "predicate": "...",
+    "object": "...",
+    "object_type": "Method|Model|Dataset|Author|Organisation|Metric|Concept|Paper|Unknown",
+    "confidence": 0.0-1.0
+  }"""
 
 
 class LLMExtractor:
@@ -63,6 +83,8 @@ class LLMExtractor:
                     obj=item["object"],
                     confidence=float(item.get("confidence", 1.0)),
                     source_id=source_id,
+                    subject_type=item.get("subject_type", "Unknown"),
+                    obj_type=item.get("object_type", "Unknown"),
                 )
                 for item in items
                 if all(k in item for k in ("subject", "predicate", "object"))
