@@ -24,6 +24,7 @@ class Triple:
     subject: str
     predicate: str
     obj: str
+    obj: str
     confidence: float = 1.0
     source_id: str = ""
     subject_type: str = "Unknown"
@@ -122,6 +123,8 @@ class LLMExtractor:
                     obj=item["object"],
                     confidence=float(item.get("confidence", 1.0)),
                     source_id=source_id,
+                    subject_type=item.get("subject_type", "Unknown"),
+                    obj_type=item.get("object_type", "Unknown"),
                     subject_type=item.get("subject_type", "Unknown"),
                     obj_type=item.get("object_type", "Unknown"),
                 )
