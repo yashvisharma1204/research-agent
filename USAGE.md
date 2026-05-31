@@ -97,7 +97,3 @@ GRAPH_HOP_LIMIT=2
 VECTOR_TOP_K=5
 
 ```
-
-```
-
-```
