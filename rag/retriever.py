@@ -170,7 +170,7 @@ class GraphRetriever:
         """
         try:
             with self.driver.session() as s:
-                return [r["name"] for r in s.run(cypher, query=query, limit=limit).data()]
+                return [r["name"] for r in s.run(cypher, q=query, limit=limit).data()]
         except Exception as exc:
             logger.warning("Fulltext search failed: %s", exc)
             return []

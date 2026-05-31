@@ -26,3 +26,13 @@ FOR ()-[r:RELATION]-() ON (r.last_seen);
 //   `vector.dimensions`: 384,
 //   `vector.similarity_function`: 'cosine'
 // }};
+
+// Paper node indexes (needed for learning path feature)
+CREATE INDEX paper_title IF NOT EXISTS
+FOR (p:Paper) ON (p.title);
+
+CREATE INDEX paper_year IF NOT EXISTS
+FOR (p:Paper) ON (p.year);
+
+CREATE FULLTEXT INDEX paper_fulltext IF NOT EXISTS
+FOR (p:Paper) ON EACH [p.title, p.summary];

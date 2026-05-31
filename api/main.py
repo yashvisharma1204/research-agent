@@ -220,17 +220,33 @@ async def get_graph(limit: int = 120):
 
     for rec in records:
         p = rec.get("p", {})
-        for seg in p.get("segments", []):
+        if not p or not isinstance(p, dict):
+            continue
+
+        segments = p.get("segments") or []
+
+        for seg in segments:
+            if not isinstance(seg, dict):
+                continue
+
             s_node = seg.get("start", {})
             e_node = seg.get("end", {})
             rel    = seg.get("relationship", {})
-            s_props = s_node.get("properties", {})
-            e_props = e_node.get("properties", {})
-            r_props = rel.get("properties", {})
-            s_labels = s_node.get("labels", [])
-            e_labels = e_node.get("labels", [])
+
+            if not isinstance(s_node, dict) or not isinstance(e_node, dict):
+                continue
+
+            s_props  = s_node.get("properties", {}) or {}
+            e_props  = e_node.get("properties", {}) or {}
+            r_props  = rel.get("properties", {}) or {} if isinstance(rel, dict) else {}
+            s_labels = s_node.get("labels", []) or []
+            e_labels = e_node.get("labels", []) or []
+
             s_id = s_node.get("elementId") or str(neo_int(s_node.get("identity", {})))
             e_id = e_node.get("elementId") or str(neo_int(e_node.get("identity", {})))
+
+            if not s_id or not e_id:
+                continue
 
             if s_id not in nodes_map:
                 nodes_map[s_id] = {
@@ -261,7 +277,6 @@ async def get_graph(limit: int = 120):
                 "confidence": float(r_props.get("confidence", 1.0)),
                 "mention_count": neo_int(r_props.get("mention_count", 1)),
             })
-
     return GraphResponse(nodes=list(nodes_map.values()), links=links)
 
 
