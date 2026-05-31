@@ -24,7 +24,6 @@ class Triple:
     subject: str
     predicate: str
     obj: str
-    obj: str
     confidence: float = 1.0
     source_id: str = ""
     subject_type: str = "Unknown"
@@ -123,8 +122,6 @@ class LLMExtractor:
                     obj=item["object"],
                     confidence=float(item.get("confidence", 1.0)),
                     source_id=source_id,
-                    subject_type=item.get("subject_type", "Unknown"),
-                    obj_type=item.get("object_type", "Unknown"),
                     subject_type=item.get("subject_type", "Unknown"),
                     obj_type=item.get("object_type", "Unknown"),
                 )
@@ -239,6 +236,6 @@ def analyse_paper(doc: dict) -> PaperNode:
     if hasattr(extractor, "analyse_paper"):
         return extractor.analyse_paper(doc)
     paper = PaperNode(paper_id=doc.get("id",""), title=doc.get("title",""),
-                      year=str(doc.get("published_date",""))[:4], authors=doc.get("authors",[]), url=doc.get("url",""))
+                    year=str(doc.get("published_date",""))[:4], authors=doc.get("authors",[]), url=doc.get("url",""))
     paper.triples = extract_triples(f"{doc.get('title','')}. {doc.get('abstract','')}", source_id=doc.get("id",""))
     return paper
