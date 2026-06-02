@@ -18,7 +18,7 @@ from pydantic import BaseModel
 from graph.merger import KGMerger
 from graph.neo4j_client import get_driver
 from ingestion.extractors import extract_triples
-from ingestion.fetchers import fetch_arxiv
+from ingestion.fetchers import fetch_arxiv, fetch_foundational
 from rag.retriever import Retriever
 from rag.synthesiser import Synthesiser
 
@@ -138,14 +138,21 @@ async def ingest_arxiv_endpoint(req: IngestURLRequest):
     if not merger or not retriever:
         raise HTTPException(503, "Agent not initialised")
 
-    docs = fetch_arxiv(req.arxiv_query, max_results=req.max_results)
+    docs = fetch_foundational(req.arxiv_query, max_results=req.max_results)
     total_triples = 0
 
     for doc in docs:
         text = f"{doc['title']}. {doc['abstract']}"
         triples = extract_triples(text, source_id=doc["id"])
 
-        merger.upsert_entity(doc["title"], "Paper", {"url": doc.get("url", ""), "source": "arxiv"})
+        # Store paper as entity
+        merger.upsert_entity(doc["title"], "Paper", {
+            "url": doc.get("url", ""),
+            "source": doc.get("source", ""),
+            "citations": doc.get("citations", 0),
+        })
+
+        # Store triples with types
         for t in triples:
             merger.upsert_entity(t.subject, t.subject_type, {})
             merger.upsert_entity(t.obj, t.obj_type, {})
@@ -154,7 +161,10 @@ async def ingest_arxiv_endpoint(req: IngestURLRequest):
         retriever.index_document(doc)
         total_triples += len(triples)
 
-    return IngestResponse(documents_processed=len(docs), triples_extracted=total_triples)
+    return IngestResponse(
+        documents_processed=len(docs),
+        triples_extracted=total_triples
+    )
 
 
 @app.post("/ingest/text", response_model=IngestResponse)

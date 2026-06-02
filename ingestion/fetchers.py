@@ -14,7 +14,7 @@ import hashlib
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
-
+import time
 import arxiv
 import feedparser
 import httpx
@@ -169,6 +169,7 @@ def fetch_by_citations(topic: str, max_results: int = 10) -> list[dict]:
             data = r.json()
     except Exception as exc:
         logger.warning("Semantic Scholar failed: %s — falling back to arXiv", exc)
+        time.sleep(5)  # brief pause before fallback
         return fetch_arxiv(topic, max_results)
 
     results = []
@@ -197,26 +198,39 @@ def fetch_by_citations(topic: str, max_results: int = 10) -> list[dict]:
 
 # ── arXiv relevance search ────────────────────────────────────────────────────
 
+import time
+
 def fetch_arxiv(query: str, max_results: int = 20) -> list[dict]:
-    """Fetch papers from arXiv sorted by relevance."""
     logger.info("Fetching arXiv (relevance): %s (max %d)", query, max_results)
     search = arxiv.Search(
         query=query,
         max_results=max_results,
         sort_by=arxiv.SortCriterion.Relevance,
     )
-    client = arxiv.Client()
+    client = arxiv.Client(page_size=min(max_results, 10), delay_seconds=3)
     results = []
-    for r in client.results(search):
-        results.append(_doc(
-            doc_id=r.entry_id,
-            title=r.title,
-            abstract=r.summary,
-            authors=[a.name for a in r.authors],
-            source="arxiv",
-            url=r.entry_id,
-            published_date=r.published.isoformat() if r.published else "",
-        ))
+
+    for attempt in range(3):
+        try:
+            for r in client.results(search):
+                results.append(_doc(
+                    doc_id=r.entry_id,
+                    title=r.title,
+                    abstract=r.summary,
+                    authors=[a.name for a in r.authors],
+                    source="arxiv",
+                    url=r.entry_id,
+                    published_date=r.published.isoformat() if r.published else "",
+                ))
+            break  # success
+        except arxiv.HTTPError as e:
+            if e.status == 429:
+                wait = 10 * (attempt + 1)
+                logger.warning("arXiv 429 — waiting %ds (attempt %d/3)", wait, attempt + 1)
+                time.sleep(wait)
+            else:
+                raise
+
     logger.info("arXiv returned %d papers", len(results))
     return results
 
@@ -290,24 +304,27 @@ def fetch_pdfs(folder: str | Path) -> list[dict]:
 
 
 # ── Main entry point ──────────────────────────────────────────────────────────
-
+_cache: dict[str, list[dict]] = {}
 def fetch_foundational(topic: str, max_results: int = 10) -> list[dict]:
-    """
-    Smart fetch for any research topic.
-    Priority: curated list → Semantic Scholar (citation-sorted) → arXiv
-    """
-    topic_clean = topic.lower().strip()
+    cache_key = f"{topic.lower().strip()}:{max_results}"
+    if cache_key in _cache:
+        logger.info("Cache hit for '%s'", topic)
+        return _cache[cache_key]
 
-    # 1. Curated list — exact seminal papers we know about
+    topic_clean = topic.lower().strip()
+    results: list[dict] = []
+
     for key in FOUNDATIONAL_PAPERS:
         if key in topic_clean or topic_clean in key:
             logger.info("Using curated paper list for: '%s'", topic_clean)
-            return fetch_by_arxiv_ids(FOUNDATIONAL_PAPERS[key])
+            results = fetch_by_arxiv_ids(FOUNDATIONAL_PAPERS[key])
+            break
 
-    # 2. Semantic Scholar — citation-sorted, any topic
-    results = fetch_by_citations(topic_clean, max_results)
-    if results:
-        return results
+    if not results:
+        results = fetch_by_citations(topic_clean, max_results)
 
-    # 3. arXiv fallback
-    return fetch_arxiv(topic_clean, max_results)
+    if not results:
+        results = fetch_arxiv(topic_clean, max_results)
+
+    _cache[cache_key] = results  # always written
+    return results
