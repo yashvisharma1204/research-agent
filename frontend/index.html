@@ -575,11 +575,11 @@ function renderGraph(nodes, links) {
   });
 
   simulation=d3.forceSimulation(nodes)
-      .force('link',d3.forceLink(links).id(d=>d.id).distance(45).strength(0.7))
-      .force('charge',d3.forceManyBody().strength(-80).distanceMax(200))
-      .force('center',d3.forceCenter(W/2,H/2).strength(0.08))
-      .force('collision',d3.forceCollide().radius(d=>nodeRadius(d)+6).strength(0.8))
-      .force('radial',d3.forceRadial(d=>d.mention_count>2?80:150, W/2, H/2).strength(0.04))
+      .force('link',d3.forceLink(links).id(d=>d.id).distance(120).strength(0.7))
+      .force('charge',d3.forceManyBody().strength(-400).distanceMax(600))
+      .force('center',d3.forceCenter(W/2,H/2).strength(0.05))
+      .force('collision',d3.forceCollide().radius(d=>nodeRadius(d)+20).strength(1))
+      .force('radial',d3.forceRadial(d=>d.mention_count>2?180:350, W/2, H/2).strength(0.02))
       .alphaDecay(0.02)
       .velocityDecay(0.4)
     .on('tick',()=>{

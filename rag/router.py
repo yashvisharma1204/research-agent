@@ -21,18 +21,18 @@ logger = logging.getLogger(__name__)
 RouteType = str   # "cypher" | "vector" | "hybrid"
 
 _ROUTER_SYSTEM = """You are a query router for a research knowledge graph.
-Classify the user query into exactly ONE of these route types:
 
-- cypher   : asks about specific named entities, relationships between them,
-             or structured facts (e.g. "What does GPT-4 outperform?",
-             "Which papers cite BERT?", "How is RAG related to LLMs?")
-- vector   : open-ended, conceptual, or thematic questions that need
-             semantic similarity over document text
-             (e.g. "What are recent trends in NLP?",
-             "Summarise approaches to few-shot learning")
-- hybrid   : needs both graph structure AND broad semantic context
+    Valid relationship types in this graph:
+    introduces, proposes, outperforms, trained_on, uses, builds_on,
+    related_to, cites, evaluates, improves, published_by, uses_dataset,
+    achieves_score_on, is_a, leads_to, works_with, generalizes_to
 
-Reply with ONLY one word: cypher, vector, or hybrid."""
+    Classify the query into ONE route:
+    - cypher   : specific named entities or relationships
+    - vector   : open-ended, thematic, conceptual
+    - hybrid   : needs both
+
+    Reply with ONLY one word: cypher, vector, or hybrid."""
 
 
 class QueryRouter:

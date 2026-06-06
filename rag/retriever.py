@@ -130,24 +130,20 @@ class GraphRetriever:
 
         if not entity_names:
             return []
-
         cypher = f"""
-        MATCH path = (seed:Entity)-[*1..{hops}]-(neighbor:Entity)
+        MATCH (seed:Entity)
         WHERE seed.name IN $seeds
-        WITH relationships(path) AS rels
-        UNWIND rels AS r
-        WITH startNode(r) AS s, r, endNode(r) AS o
-        RETURN
-          s.name  AS subject,
-          r.type  AS predicate,
-          o.name  AS obj,
-          coalesce(r.confidence, 1.0)    AS confidence,
-          coalesce(r.mention_count, 1)   AS mention_count
-        ORDER BY r.confidence DESC, r.mention_count DESC
+        OR ANY(s IN $seeds WHERE toLower(seed.name) CONTAINS toLower(s))
+        MATCH (seed)-[r]-(neighbor:Entity)
+        RETURN seed.name AS subject, r.type AS predicate,
+            neighbor.name AS obj,
+            coalesce(r.confidence, 1.0) AS confidence,
+            coalesce(r.mention_count, 1) AS mention_count
+        ORDER BY r.confidence DESC
         LIMIT $limit
         """
         with self.driver.session() as session:
-            records = session.run(cypher, seeds=entity_names, limit=limit).data()
+            records = session.run(cypher, seeds=entity_names, seed_name=entity_names[0] if entity_names else "",limit=limit).data()
 
         return [
             GraphTriple(
@@ -196,6 +192,10 @@ class Retriever:
         graph_triples: list[GraphTriple] = []
         if route in ("cypher", "hybrid"):
             graph_triples = self.graph.multi_hop_traverse(entity_names)
+        
+        if route == "cypher" and len(graph_triples) < 3:
+            logger.info("Cypher returned %d triples — falling back to vector", len(graph_triples))
+            route = "hybrid"
 
         # 4. Vector search (skip for pure cypher route)
         vector_results: list[VectorResult] = []
