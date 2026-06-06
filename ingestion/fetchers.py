@@ -196,20 +196,18 @@ def fetch_by_citations(topic: str, max_results: int = 10) -> list[dict]:
     return results
 
 
-# ── arXiv relevance search ────────────────────────────────────────────────────
+# ── Fetch by exact arXiv IDs ──────────────────────────────────────────────────
 
-import time
-
-def fetch_arxiv(query: str, max_results: int = 20) -> list[dict]:
-    logger.info("Fetching arXiv (relevance): %s (max %d)", query, max_results)
-    search = arxiv.Search(
-        query=query,
-        max_results=max_results,
-        sort_by=arxiv.SortCriterion.Relevance,
-    )
-    client = arxiv.Client(page_size=min(max_results, 10), delay_seconds=3)
+def fetch_arxiv(paper_ids: list[str]) -> list[dict]:
+    """Fetch specific papers by their arXiv IDs with built-in rate-limit handling."""
+    logger.info("Fetching %d curated papers by arXiv ID", len(paper_ids))
+    
+    # Configure the client to space out page chunks and handle retries natively
+    client = arxiv.Client(page_size=min(len(paper_ids), 10), delay_seconds=4)
+    search = arxiv.Search(id_list=paper_ids)
     results = []
-
+    
+    # Implement active backoff loops matching your robust fallback architecture
     for attempt in range(3):
         try:
             for r in client.results(search):
@@ -218,22 +216,20 @@ def fetch_arxiv(query: str, max_results: int = 20) -> list[dict]:
                     title=r.title,
                     abstract=r.summary,
                     authors=[a.name for a in r.authors],
-                    source="arxiv",
+                    source="arxiv_curated",
                     url=r.entry_id,
                     published_date=r.published.isoformat() if r.published else "",
                 ))
-            break  # success
+            break  # Break loop on successful resolution
         except arxiv.HTTPError as e:
             if e.status == 429:
-                wait = 10 * (attempt + 1)
-                logger.warning("arXiv 429 — waiting %ds (attempt %d/3)", wait, attempt + 1)
+                wait = 12 * (attempt + 1)
+                logger.warning("arXiv curated fetch hit 429 — backing off for %ds (attempt %d/3)", wait, attempt + 1)
                 time.sleep(wait)
             else:
                 raise
-
-    logger.info("arXiv returned %d papers", len(results))
+                
     return results
-
 
 # ── RSS / Web feeds ───────────────────────────────────────────────────────────
 
