@@ -57,7 +57,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],          # tighten in production
+    allow_origins=["https://extraordinary-axolotl-c63e93.netlify.app"], # Replace with your Netlify URL
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -79,11 +79,6 @@ class QueryResponse(BaseModel):
     route: str
     model: str
     context: Optional[dict] = None
-
-
-class IngestURLRequest(BaseModel):
-    arxiv_query: str
-    max_results: int = 5
 
 
 class IngestTextRequest(BaseModel):
