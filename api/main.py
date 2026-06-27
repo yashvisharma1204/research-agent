@@ -111,6 +111,11 @@ class IngestURLRequest(BaseModel):
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
+
+@app.get("/")
+async def serve_frontend():
+    """Serves the index.html UI at the root URL."""
+    return FileResponse("index.html")
 @app.get("/health")
 async def health():
     return {"status": "ok"}
