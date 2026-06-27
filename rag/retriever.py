@@ -80,30 +80,32 @@ class VectorStore:
             pickle.dump(self._meta, f)
 
     def add(self, texts: list[str], doc_ids: list[str]):
+        """Store vectors natively in Neo4j using embeddings."""
         if not texts:
             return
         embs = _encode(texts)
-        self._index.add(embs)
-        self._meta.extend({"text": t, "doc_id": d} for t, d in zip(texts, doc_ids))
-        self._save()
-        logger.debug("Added %d vectors to FAISS", len(texts))
+        # Assuming you have a way to associate these embeddings with entities/papers
+        # Example cypher for persisting vectors:
+        cypher = """
+        UNWIND $batch AS item
+        MATCH (e:Entity {name: item.doc_id})
+        SET e.embedding = item.embedding
+        """
+        batch = [{"doc_id": d, "embedding": e.tolist()} for d, e in zip(doc_ids, embs)]
+        with self.driver.session() as s:
+            s.run(cypher, batch=batch)
 
     def search(self, query: str, k: int = 5) -> list[VectorResult]:
-        if self._index.ntotal == 0:
-            return []
-        q_emb = _encode([query])
-        scores, indices = self._index.search(q_emb, min(k, self._index.ntotal))
-        results = []
-        for score, idx in zip(scores[0], indices[0]):
-            if idx == -1:
-                continue
-            meta = self._meta[idx]
-            results.append(VectorResult(
-                text=meta["text"],
-                score=float(score),
-                doc_id=meta["doc_id"],
-            ))
-        return results
+        """Search vectors using Neo4j native vector index."""
+        q_emb = _encode([query])[0].tolist()
+        cypher = """
+        CALL db.index.vector.queryNodes('entity_embedding', $k, $embedding)
+        YIELD node, score
+        RETURN node.name AS text, score, node.name AS doc_id
+        """
+        with self.driver.session() as s:
+            records = s.run(cypher, k=k, embedding=q_emb).data()
+            return [VectorResult(r["text"], r["score"], r["doc_id"]) for r in records]
 
 
 # ── Graph traversal ───────────────────────────────────────────────────────────

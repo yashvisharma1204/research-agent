@@ -27,12 +27,11 @@ SCHEMA_STATEMENTS = [
     # Full-text index for fuzzy entity search
     "CREATE FULLTEXT INDEX entity_fulltext IF NOT EXISTS "
     "FOR (e:Entity) ON EACH [e.name]",
-
     # Vector index placeholder (requires Neo4j 5.11+ with GDS)
     # Uncomment if using Neo4j native vector search:
-    # "CREATE VECTOR INDEX entity_embedding IF NOT EXISTS "
-    # "FOR (e:Entity) ON (e.embedding) OPTIONS {indexConfig: {"
-    # "  `vector.dimensions`: 384, `vector.similarity_function`: 'cosine'}}",
+    "CREATE VECTOR INDEX entity_embedding IF NOT EXISTS "
+    "FOR (e:Entity) ON (e.embedding) OPTIONS {indexConfig: {"
+    "  `vector.dimensions`: 384, `vector.similarity_function`: 'cosine'}}",
 ]
 
 
