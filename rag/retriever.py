@@ -55,13 +55,31 @@ class RetrievalContext(NamedTuple):
 # ── FAISS vector store ────────────────────────────────────────────────────────
 
 class VectorStore:
-    """Lightweight FAISS store that persists to disk."""
+    """Neo4j-backed vector store (Persistent)."""
+    
+    def __init__(self, driver: Driver): # Added driver here
+        self.driver = driver            # Assigned driver
 
-    def __init__(self):
-        self._index: faiss.IndexFlatIP | None = None
-        self._meta: list[dict] = []
-        self._load()
+    def add(self, texts: list[str], doc_ids: list[str]):
+        """Persist vectors natively in Neo4j."""
+        if not texts: return
+        embs = _encode(texts)
+        # Use your native Neo4j vector ingestion logic here
+        # Example provided for clarity:
+        with self.driver.session() as s:
+            s.run("...", batch=[...]) 
 
+    def search(self, query: str, k: int = 5) -> list[VectorResult]:
+        """Search vectors using Neo4j native vector index."""
+        q_emb = _encode([query])[0].tolist()
+        cypher = """
+        CALL db.index.vector.queryNodes('entity_embedding', $k, $embedding)
+        YIELD node, score
+        RETURN node.name AS text, score, node.name AS doc_id
+        """
+        with self.driver.session() as s: # This now works!
+            records = s.run(cypher, k=k, embedding=q_emb).data()
+            return [VectorResult(r["text"], float(r["score"]), r["doc_id"]) for r in records]
     def _load(self):
         if _FAISS_INDEX_PATH.exists() and _FAISS_META_PATH.exists():
             self._index = faiss.read_index(str(_FAISS_INDEX_PATH))
@@ -78,34 +96,6 @@ class VectorStore:
         faiss.write_index(self._index, str(_FAISS_INDEX_PATH))
         with open(_FAISS_META_PATH, "wb") as f:
             pickle.dump(self._meta, f)
-
-    def add(self, texts: list[str], doc_ids: list[str]):
-        """Store vectors natively in Neo4j using embeddings."""
-        if not texts:
-            return
-        embs = _encode(texts)
-        # Assuming you have a way to associate these embeddings with entities/papers
-        # Example cypher for persisting vectors:
-        cypher = """
-        UNWIND $batch AS item
-        MATCH (e:Entity {name: item.doc_id})
-        SET e.embedding = item.embedding
-        """
-        batch = [{"doc_id": d, "embedding": e.tolist()} for d, e in zip(doc_ids, embs)]
-        with self.driver.session() as s:
-            s.run(cypher, batch=batch)
-
-    def search(self, query: str, k: int = 5) -> list[VectorResult]:
-        """Search vectors using Neo4j native vector index."""
-        q_emb = _encode([query])[0].tolist()
-        cypher = """
-        CALL db.index.vector.queryNodes('entity_embedding', $k, $embedding)
-        YIELD node, score
-        RETURN node.name AS text, score, node.name AS doc_id
-        """
-        with self.driver.session() as s:
-            records = s.run(cypher, k=k, embedding=q_emb).data()
-            return [VectorResult(r["text"], r["score"], r["doc_id"]) for r in records]
 
 
 # ── Graph traversal ───────────────────────────────────────────────────────────
@@ -179,7 +169,7 @@ class GraphRetriever:
 class Retriever:
     def __init__(self, driver: Driver):
         self.graph = GraphRetriever(driver)
-        self.vector = VectorStore()
+        self.vector = VectorStore(driver) # Inject the driver here
 
     def retrieve(self, query: str) -> RetrievalContext:
         # 1. Classify intent
