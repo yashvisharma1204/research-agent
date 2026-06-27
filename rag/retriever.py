@@ -57,17 +57,32 @@ class RetrievalContext(NamedTuple):
 class VectorStore:
     """Neo4j-backed vector store (Persistent)."""
     
-    def __init__(self, driver: Driver): # Added driver here
-        self.driver = driver            # Assigned driver
+    def __init__(self, driver: Driver):
+        self.driver = driver
 
     def add(self, texts: list[str], doc_ids: list[str]):
         """Persist vectors natively in Neo4j."""
-        if not texts: return
+        if not texts:
+            return
+            
         embs = _encode(texts)
-        # Use your native Neo4j vector ingestion logic here
-        # Example provided for clarity:
+        
+        # Corrected Cypher: UNWIND the batch and match the entity by its unique ID
+        # Note: Ensure 'name' is the property used to identify the Entity.
+        cypher = """
+        UNWIND $batch AS item
+        MATCH (e:Entity {name: item.doc_id})
+        SET e.embedding = item.embedding
+        """
+        
+        # Properly map the data into a list of dictionaries for Neo4j
+        batch = [
+            {"doc_id": d, "embedding": e.tolist()} 
+            for d, e in zip(doc_ids, embs)
+        ]
+        
         with self.driver.session() as s:
-            s.run("...", batch=[...]) 
+            s.run(cypher, batch=batch)
 
     def search(self, query: str, k: int = 5) -> list[VectorResult]:
         """Search vectors using Neo4j native vector index."""
@@ -77,25 +92,9 @@ class VectorStore:
         YIELD node, score
         RETURN node.name AS text, score, node.name AS doc_id
         """
-        with self.driver.session() as s: # This now works!
+        with self.driver.session() as s:
             records = s.run(cypher, k=k, embedding=q_emb).data()
             return [VectorResult(r["text"], float(r["score"]), r["doc_id"]) for r in records]
-    def _load(self):
-        if _FAISS_INDEX_PATH.exists() and _FAISS_META_PATH.exists():
-            self._index = faiss.read_index(str(_FAISS_INDEX_PATH))
-            with open(_FAISS_META_PATH, "rb") as f:
-                self._meta = pickle.load(f)
-            logger.info("FAISS index loaded (%d vectors)", self._index.ntotal)
-        else:
-            dim = 384   # all-MiniLM-L6-v2 output dim
-            self._index = faiss.IndexFlatIP(dim)
-            self._meta = []
-
-    def _save(self):
-        _FAISS_INDEX_PATH.parent.mkdir(parents=True, exist_ok=True)
-        faiss.write_index(self._index, str(_FAISS_INDEX_PATH))
-        with open(_FAISS_META_PATH, "wb") as f:
-            pickle.dump(self._meta, f)
 
 
 # ── Graph traversal ───────────────────────────────────────────────────────────
