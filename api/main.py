@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
+from typing import Optional
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
@@ -21,7 +22,7 @@ from ingestion.extractors import extract_triples
 from ingestion.fetchers import fetch_arxiv, fetch_foundational
 from rag.retriever import Retriever
 from rag.synthesiser import Synthesiser
-
+from fastapi.responses import FileResponse # Make sure this is imported
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -51,6 +52,16 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# ── CORS middleware (fixes browser "Failed to fetch") ─────────────────────────
+from fastapi.middleware.cors import CORSMiddleware
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],          # tighten in production
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # ── Request / response models ─────────────────────────────────────────────────
 
@@ -67,7 +78,7 @@ class QueryResponse(BaseModel):
     vector_result_count: int
     route: str
     model: str
-    context: dict | None = None
+    context: Optional[dict] = None
 
 
 class IngestURLRequest(BaseModel):
@@ -91,10 +102,20 @@ class StatsResponse(BaseModel):
     relations: int
     papers: int
     vector_index_size: int
+class ReportRequest(BaseModel):
+    topic: str
 
+class IngestURLRequest(BaseModel):
+    arxiv_query: str
+    max_results: int = 5
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
+
+@app.get("/")
+async def serve_frontend():
+    """Serves the index.html UI at the root URL."""
+    return FileResponse("index.html")
 @app.get("/health")
 async def health():
     return {"status": "ok"}
@@ -199,17 +220,6 @@ async def stats():
         vector_index_size=retriever.vector._index.ntotal,
     )
 
-
-# ── CORS middleware (fixes browser "Failed to fetch") ─────────────────────────
-from fastapi.middleware.cors import CORSMiddleware
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],          # tighten in production
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
 @app.post("/query/export-notes-html")
 async def export_notes_html_endpoint(req: ReportRequest):

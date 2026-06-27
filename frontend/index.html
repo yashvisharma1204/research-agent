@@ -385,22 +385,23 @@
 
 <script>
 // ══════════════════════════════════════════════
-//  NEO-BRUTALIST COLOUR SYSTEM FOR GRAPH
+//  1. CONFIG & HELPERS (SINGLE SOURCE OF TRUTH)
 // ══════════════════════════════════════════════
 const TYPE_COLORS = {
-  Method:       '#ff99cc',   // pink
-  Model:        '#ffe600',   // yellow
-  Dataset:      '#99ccff',   // blue
-  Author:       '#e6b3ff',   // purple
-  Organisation: '#ffb366',   // orange
-  Metric:       '#b3ffb3',   // green
-  Concept:      '#ffffff',   // white
-  Paper:        '#ff6666',   // red
-  Unknown:      '#e5e5e5'
+  Method:       '#ff99cc', Model: '#ffe600', Dataset: '#99ccff',
+  Author:       '#e6b3ff', Organisation: '#ffb366', Metric: '#b3ffb3',
+  Concept:      '#ffffff', Paper: '#ff6666', Unknown: '#e5e5e5'
 };
 
 function typeColor(type) { return TYPE_COLORS[type] || TYPE_COLORS.Unknown; }
 function escHtml(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+function simpleBubble(role, text) {
+  const d = document.createElement('div');
+  d.className = 'message ' + role;
+  d.innerHTML = `<div class="msg-bubble">${escHtml(text)}</div>`;
+  return d;
+}
 
 const BASE = () => {
   let url = document.getElementById('apiUrl').value.replace(/\/$/,'');
@@ -411,7 +412,7 @@ const BASE = () => {
 };
 
 // ══════════════════════════════════════════════
-//  QUERY / CHAT & COMMAND LOGIC
+//  2. QUERY / CHAT & COMMAND LOGIC
 // ══════════════════════════════════════════════
 async function sendQuery() {
   const input = document.getElementById('queryInput');
@@ -421,17 +422,13 @@ async function sendQuery() {
   const chatArea = document.getElementById('chatArea');
   const btn = document.getElementById('sendBtn');
   
-  // Clear placeholder text
   if(chatArea.children[0]?.innerText.includes("Ask the Research Graph")) chatArea.innerHTML = '';
   
-  // Append User message to chat
   chatArea.appendChild(simpleBubble('user', q));
   input.value = ''; 
   btn.disabled = true; 
   chatArea.scrollTop = chatArea.scrollHeight;
 
-  // ── COMMAND INTERCEPTOR ──
-  // Checks if user typed: >Convert [topic] into study notes html
   const commandMatch = q.match(/^>Convert\s+(.+?)\s+into study notes html/i);
   
   if (commandMatch) {
@@ -441,10 +438,8 @@ async function sendQuery() {
     return;
   }
 
-  // ── NORMAL CHAT FLOW ──
   const thinking = simpleBubble('assistant', 'PROCESSING...');
   chatArea.appendChild(thinking); 
-  chatArea.scrollTop = chatArea.scrollHeight;
   
   try {
     const r = await fetch(BASE()+'/query', {
@@ -461,10 +456,9 @@ async function sendQuery() {
     
     const wrap = document.createElement('div');
     wrap.className = 'message assistant';
-    const meta = `<div class="msg-meta"><span style="background:var(--yellow); border:1px solid #000; padding:2px 6px; border-radius:4px;">ROUTE: ${(d.route||'HYBRID').toUpperCase()}</span></div>`;
+    const meta = `<div class="msg-meta"><span style="background:var(--yellow); padding:2px 6px; border-radius:4px;">ROUTE: ${(d.route||'HYBRID').toUpperCase()}</span></div>`;
     wrap.innerHTML = `<div class="msg-bubble">${escHtml(d.answer)}</div>${meta}`;
     chatArea.appendChild(wrap);
-    
   } catch(e) {
     thinking.remove();
     chatArea.appendChild(simpleBubble('assistant','⚠ Error: ' + e.message));
@@ -474,11 +468,10 @@ async function sendQuery() {
   chatArea.scrollTop = chatArea.scrollHeight;
 }
 
-// ── NEW: Handle Study Notes Command ──
+// ── STUDY NOTES GENERATOR ──
 async function handleStudyNotesGeneration(topic, chatArea) {
   const thinking = simpleBubble('assistant', `Compiling HTML study notes for [${topic.toUpperCase()}]...`);
   chatArea.appendChild(thinking);
-  chatArea.scrollTop = chatArea.scrollHeight;
 
   try {
     const r = await fetch(BASE() + '/query/export-notes-html', {
@@ -490,45 +483,24 @@ async function handleStudyNotesGeneration(topic, chatArea) {
     thinking.remove();
     if (!r.ok) throw new Error(await r.text());
 
-    const d = await r.json(); // Backend returns JSON with { title, html_content }
-    
-    // 1. Tell the user it's done in the chat
-    const successMsg = document.createElement('div');
-    successMsg.className = 'message assistant';
-    successMsg.innerHTML = `<div class="msg-bubble" style="border-color: #10b981; background: #ecfdf5;">
-      <strong>✓ Notes Compiled!</strong><br>Check your Study Notes panel to read the generated document.
-    </div>`;
-    chatArea.appendChild(successMsg);
-
-    // 2. Add the clickable card to the Bento Box
+    const d = await r.json(); 
+    chatArea.appendChild(simpleBubble('assistant', `✓ Notes compiled! Check the Study Notes panel.`));
     addStudyNoteCard(topic, d.html_content);
-
   } catch (e) {
     thinking.remove();
-    chatArea.appendChild(simpleBubble('assistant', `⚠ Failed to generate notes: ${e.message}`));
+    chatArea.appendChild(simpleBubble('assistant', `⚠ Error: ${e.message}`));
   }
 }
 
-// ── UI Helpers for Study Notes ──
 function addStudyNoteCard(topic, htmlContent) {
-  const list = document.querySelector('.blog-list');
+  const list = document.getElementById('studyNotesList');
+  // Remove placeholder if present
+  if (list.querySelector('div[style*="dashed"]')) list.innerHTML = '';
   
   const a = document.createElement('a');
-  a.href = "#";
-  a.className = "blog-post";
-  a.style.background = "#fffdf9"; // Ensure it pops visually
-  a.onclick = (e) => {
-    e.preventDefault();
-    openModal(topic, htmlContent);
-  };
-
-  a.innerHTML = `
-    <span class="tag" style="background: var(--blue);">NEW</span>
-    <h3>${escHtml(topic.toUpperCase())}</h3>
-    <p>Auto-generated from GraphRAG</p>
-  `;
-  
-  // Insert at the top of the list
+  a.href = "#"; a.className = "blog-post";
+  a.onclick = (e) => { e.preventDefault(); openModal(topic, htmlContent); };
+  a.innerHTML = `<span class="tag" style="background:var(--blue);">NEW</span><h3>${escHtml(topic.toUpperCase())}</h3><p>Auto-generated</p>`;
   list.insertBefore(a, list.firstChild);
 }
 
@@ -538,9 +510,7 @@ function openModal(title, content) {
   document.getElementById('notesModal').style.display = 'flex';
 }
 
-function closeModal() {
-  document.getElementById('notesModal').style.display = 'none';
-}
+function closeModal() { document.getElementById('notesModal').style.display = 'none'; }
 
 // ══════════════════════════════════════════════
 //  GRAPH LOGIC (D3)
