@@ -211,7 +211,21 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.post("/query/export-notes-html")
+async def export_notes_html_endpoint(req: ReportRequest):
+    """Intercepts frontend command to generate an HTML study guide."""
+    if not retriever or not synthesiser:
+        raise HTTPException(503, "Agent not initialised")
 
+    topic_clean = req.topic.lower().strip()
+    context = retriever.retrieve(topic_clean)
+
+    if not context.graph_triples and not context.vector_results:
+        raise HTTPException(status_code=404, detail="No data found for this topic. Ingest papers first.")
+
+    # Call the new HTML generator
+    data = synthesiser.compile_html_notes(topic_clean, context)
+    return data
 # ── Graph endpoint ────────────────────────────────────────────────────────────
 
 class GraphResponse(BaseModel):
