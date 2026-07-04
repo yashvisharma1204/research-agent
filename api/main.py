@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
+from typing import Optional
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
@@ -21,7 +22,7 @@ from ingestion.extractors import extract_triples
 from ingestion.fetchers import fetch_arxiv, fetch_foundational
 from rag.retriever import Retriever
 from rag.synthesiser import Synthesiser
-
+from fastapi.responses import FileResponse # Make sure this is imported
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -51,6 +52,16 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# ── CORS middleware (fixes browser "Failed to fetch") ─────────────────────────
+from fastapi.middleware.cors import CORSMiddleware
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["https://extraordinary-axolotl-c63e93.netlify.app"], # Replace with your Netlify URL
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # ── Request / response models ─────────────────────────────────────────────────
 
@@ -67,12 +78,7 @@ class QueryResponse(BaseModel):
     vector_result_count: int
     route: str
     model: str
-    context: dict | None = None
-
-
-class IngestURLRequest(BaseModel):
-    arxiv_query: str
-    max_results: int = 5
+    context: Optional[dict] = None
 
 
 class IngestTextRequest(BaseModel):
@@ -91,7 +97,12 @@ class StatsResponse(BaseModel):
     relations: int
     papers: int
     vector_index_size: int
+class ReportRequest(BaseModel):
+    topic: str
 
+class IngestURLRequest(BaseModel):
+    arxiv_query: str
+    max_results: int = 5
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
@@ -200,18 +211,21 @@ async def stats():
     )
 
 
-# ── CORS middleware (fixes browser "Failed to fetch") ─────────────────────────
-from fastapi.middleware.cors import CORSMiddleware
+@app.post("/query/export-notes-html")
+async def export_notes_html_endpoint(req: ReportRequest):
+    """Intercepts frontend command to generate an HTML study guide."""
+    if not retriever or not synthesiser:
+        raise HTTPException(503, "Agent not initialised")
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],          # tighten in production
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+    topic_clean = req.topic.lower().strip()
+    context = retriever.retrieve(topic_clean)
 
+    if not context.graph_triples and not context.vector_results:
+        raise HTTPException(status_code=404, detail="No data found for this topic. Ingest papers first.")
 
+    # Call the new HTML generator
+    data = synthesiser.compile_html_notes(topic_clean, context)
+    return data
 # ── Graph endpoint ────────────────────────────────────────────────────────────
 
 class GraphResponse(BaseModel):
