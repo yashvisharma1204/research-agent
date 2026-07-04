@@ -95,3 +95,28 @@ Question: {question}"""
             vector_result_count=len(context.vector_results),
             model=cfg.LLM_MODEL,
         )
+
+def compile_html_notes(self, topic: str, context: RetrievalContext) -> dict:
+        """Stateless compiler that returns raw HTML structured notes."""
+        prompt = f"""You are an educational compiler. Synthesize the provided context into comprehensive, well-structured Study Notes formatted purely in HTML.
+
+Use standard HTML tags (<h1>, <h2>, <p>, <ul>, <li>, <strong>, <em>, <blockquote>).
+Do NOT include <html>, <head>, or <body> tags. Just return the inner HTML content.
+Structure it logically: Title, TL;DR, Key Concepts, Graph Relationships, and Summary.
+
+## Topic Workspace: {topic.upper()}
+### Graph Context:
+{_format_triples(context.graph_triples)}
+### Vector Context:
+{_format_vector(context.vector_results)}
+"""
+        compiler_instance = genai.GenerativeModel(model_name=cfg.LLM_MODEL)
+        response = compiler_instance.generate_content(prompt)
+        
+        clean_html = response.text.strip()
+        if clean_html.startswith("```html"):
+            clean_html = "\n".join(clean_html.split("\n")[1:-1])
+        elif clean_html.startswith("```"):
+            clean_html = "\n".join(clean_html.split("\n")[1:-1])
+            
+        return {"title": topic, "html_content": clean_html}

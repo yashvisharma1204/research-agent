@@ -55,55 +55,46 @@ class RetrievalContext(NamedTuple):
 # ── FAISS vector store ────────────────────────────────────────────────────────
 
 class VectorStore:
-    """Lightweight FAISS store that persists to disk."""
-
-    def __init__(self):
-        self._index: faiss.IndexFlatIP | None = None
-        self._meta: list[dict] = []
-        self._load()
-
-    def _load(self):
-        if _FAISS_INDEX_PATH.exists() and _FAISS_META_PATH.exists():
-            self._index = faiss.read_index(str(_FAISS_INDEX_PATH))
-            with open(_FAISS_META_PATH, "rb") as f:
-                self._meta = pickle.load(f)
-            logger.info("FAISS index loaded (%d vectors)", self._index.ntotal)
-        else:
-            dim = 384   # all-MiniLM-L6-v2 output dim
-            self._index = faiss.IndexFlatIP(dim)
-            self._meta = []
-
-    def _save(self):
-        _FAISS_INDEX_PATH.parent.mkdir(parents=True, exist_ok=True)
-        faiss.write_index(self._index, str(_FAISS_INDEX_PATH))
-        with open(_FAISS_META_PATH, "wb") as f:
-            pickle.dump(self._meta, f)
+    """Neo4j-backed vector store (Persistent)."""
+    
+    def __init__(self, driver: Driver):
+        self.driver = driver
 
     def add(self, texts: list[str], doc_ids: list[str]):
+        """Persist vectors natively in Neo4j."""
         if not texts:
             return
+            
         embs = _encode(texts)
-        self._index.add(embs)
-        self._meta.extend({"text": t, "doc_id": d} for t, d in zip(texts, doc_ids))
-        self._save()
-        logger.debug("Added %d vectors to FAISS", len(texts))
+        
+        # Corrected Cypher: UNWIND the batch and match the entity by its unique ID
+        # Note: Ensure 'name' is the property used to identify the Entity.
+        cypher = """
+        UNWIND $batch AS item
+        MATCH (e:Entity {name: item.doc_id})
+        SET e.embedding = item.embedding
+        """
+        
+        # Properly map the data into a list of dictionaries for Neo4j
+        batch = [
+            {"doc_id": d, "embedding": e.tolist()} 
+            for d, e in zip(doc_ids, embs)
+        ]
+        
+        with self.driver.session() as s:
+            s.run(cypher, batch=batch)
 
     def search(self, query: str, k: int = 5) -> list[VectorResult]:
-        if self._index.ntotal == 0:
-            return []
-        q_emb = _encode([query])
-        scores, indices = self._index.search(q_emb, min(k, self._index.ntotal))
-        results = []
-        for score, idx in zip(scores[0], indices[0]):
-            if idx == -1:
-                continue
-            meta = self._meta[idx]
-            results.append(VectorResult(
-                text=meta["text"],
-                score=float(score),
-                doc_id=meta["doc_id"],
-            ))
-        return results
+        """Search vectors using Neo4j native vector index."""
+        q_emb = _encode([query])[0].tolist()
+        cypher = """
+        CALL db.index.vector.queryNodes('entity_embedding', $k, $embedding)
+        YIELD node, score
+        RETURN node.name AS text, score, node.name AS doc_id
+        """
+        with self.driver.session() as s:
+            records = s.run(cypher, k=k, embedding=q_emb).data()
+            return [VectorResult(r["text"], float(r["score"]), r["doc_id"]) for r in records]
 
 
 # ── Graph traversal ───────────────────────────────────────────────────────────
@@ -177,7 +168,7 @@ class GraphRetriever:
 class Retriever:
     def __init__(self, driver: Driver):
         self.graph = GraphRetriever(driver)
-        self.vector = VectorStore()
+        self.vector = VectorStore(driver) # Inject the driver here
 
     def retrieve(self, query: str) -> RetrievalContext:
         # 1. Classify intent
