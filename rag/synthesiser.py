@@ -97,18 +97,26 @@ class Synthesiser:
                 model=cfg.LLM_MODEL,
             )
         except exceptions.ResourceExhausted:
-            logger.error("Gemini API Quota Exceeded or Limit is 0!")
-            
-            # Return this fallback object instead of crashing
-            # This stops the 500 Error and the fake CORS Error!
+            logger.error("Gemini API Quota Exceeded!")
             return Answer(
                 question=question,
-                answer="⚠️ API Quota Reached or Model Restricted. Please check your Google AI Studio billing, or ensure the backend is using gemini-1.5-flash.",
-                entity_seeds=[],
-                graph_triple_count=0,
-                vector_result_count=0,
-                route="ERROR",
-                model="Gemini (Rate Limited)"
+                answer="⚠️ API Quota Reached. Please wait a minute.",
+                entity_seeds=[], graph_triple_count=0, vector_result_count=0, route="ERROR", model="Gemini"
+            )
+        except exceptions.NotFound:
+            logger.error("Gemini Model Not Found! Check model string.")
+            return Answer(
+                question=question,
+                answer="⚠️ Model deprecated. Please ensure the backend is using 'gemini-2.5-flash'.",
+                entity_seeds=[], graph_triple_count=0, vector_result_count=0, route="ERROR", model="Gemini"
+            )
+        except exceptions.GoogleAPICallError as e:
+            # This acts as a catch-all for any other Google API failure
+            logger.error(f"Google API Error: {e}")
+            return Answer(
+                question=question,
+                answer="⚠️ Google API Connection Error.",
+                entity_seeds=[], graph_triple_count=0, vector_result_count=0, route="ERROR", model="Gemini"
             )
     
 
