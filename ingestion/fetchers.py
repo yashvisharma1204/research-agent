@@ -130,23 +130,35 @@ FOUNDATIONAL_PAPERS: dict[str, list[str]] = {
 # ── Fetch by exact arXiv IDs ──────────────────────────────────────────────────
 
 def fetch_by_arxiv_ids(paper_ids: list[str]) -> list[dict]:
-    """Fetch specific papers by their arXiv IDs."""
+    """Fetch specific papers by their arXiv IDs with built-in rate-limit handling."""
     logger.info("Fetching %d curated papers by arXiv ID", len(paper_ids))
-    client = arxiv.Client()
+    
+    client = arxiv.Client(page_size=min(len(paper_ids), 10), delay_seconds=4)
     search = arxiv.Search(id_list=paper_ids)
-    results = []
-    for r in client.results(search):
-        results.append(_doc(
-            doc_id=r.entry_id,
-            title=r.title,
-            abstract=r.summary,
-            authors=[a.name for a in r.authors],
-            source="arxiv_curated",
-            url=r.entry_id,
-            published_date=r.published.isoformat() if r.published else "",
-        ))
+    
+    for attempt in range(3):
+        try:
+            results = []
+            for r in client.results(search):
+                results.append(_doc(
+                    doc_id=r.entry_id,
+                    title=r.title,
+                    abstract=r.summary,
+                    authors=[a.name for a in r.authors],
+                    source="arxiv_curated",
+                    url=r.entry_id,
+                    published_date=r.published.isoformat() if r.published else "",
+                ))
+            break
+        except arxiv.HTTPError as e:
+            if e.status == 429:
+                wait = 12 * (attempt + 1)
+                logger.warning("arXiv ID fetch hit 429 — backing off for %ds", wait)
+                time.sleep(wait)
+            else:
+                raise
+                
     return results
-
 
 # ── Fetch by citation count via Semantic Scholar ──────────────────────────────
 
@@ -196,27 +208,27 @@ def fetch_by_citations(topic: str, max_results: int = 10) -> list[dict]:
     return results
 
 
-# ── Fetch by exact arXiv IDs ──────────────────────────────────────────────────
+# ── Fetch by search query (Fallback) ─────────────────────────────────────────
 
-def fetch_arxiv(paper_ids: list[str]) -> list[dict]:
-    """Fetch specific papers by their arXiv IDs with built-in rate-limit handling."""
-    logger.info("Fetching %d curated papers by arXiv ID", len(paper_ids))
+def fetch_arxiv(query: str, max_results: int = 5) -> list[dict]:
+    """Fetch papers based on a text search query with built-in rate-limit handling."""
+    logger.info("Fetching top %d papers for query: '%s'", max_results, query)
     
-    # Configure the client to space out page chunks and handle retries natively
-    client = arxiv.Client(page_size=min(len(paper_ids), 10), delay_seconds=4)
-    search = arxiv.Search(id_list=paper_ids)
-    results = []
+    # Configure the client to handle retries natively
+    client = arxiv.Client(delay_seconds=4)
+    search = arxiv.Search(query=query, max_results=max_results)
     
-    # Implement active backoff loops matching your robust fallback architecture
+    # Implement active backoff loops
     for attempt in range(3):
         try:
+            results = []
             for r in client.results(search):
                 results.append(_doc(
                     doc_id=r.entry_id,
                     title=r.title,
                     abstract=r.summary,
                     authors=[a.name for a in r.authors],
-                    source="arxiv_curated",
+                    source="arxiv_search",
                     url=r.entry_id,
                     published_date=r.published.isoformat() if r.published else "",
                 ))
@@ -224,7 +236,7 @@ def fetch_arxiv(paper_ids: list[str]) -> list[dict]:
         except arxiv.HTTPError as e:
             if e.status == 429:
                 wait = 12 * (attempt + 1)
-                logger.warning("arXiv curated fetch hit 429 — backing off for %ds (attempt %d/3)", wait, attempt + 1)
+                logger.warning("arXiv search hit 429 — backing off for %ds (attempt %d/3)", wait, attempt + 1)
                 time.sleep(wait)
             else:
                 raise
