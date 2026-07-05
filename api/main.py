@@ -196,7 +196,7 @@ async def stats():
         entities=graph_stats["entities"],
         relations=graph_stats["relations"],
         papers=graph_stats["papers"],
-        vector_index_size=retriever.vector._index.ntotal,
+        vector_index_size=graph_stats.get("vectors", 0),  # <--- NEO4J DEPENDENCY
     )
 
 

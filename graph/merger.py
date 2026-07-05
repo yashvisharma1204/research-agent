@@ -7,7 +7,6 @@ when the same real-world entity appears under slightly different names.
 from __future__ import annotations
 
 import logging
-
 import numpy as np
 from neo4j import Driver
 
@@ -20,11 +19,6 @@ logger = logging.getLogger(__name__)
 class KGMerger:
     """
     Merges entities and triples into Neo4j.
-
-    Entity resolution strategy:
-    1. Exact name+type match → reuse existing node (via MERGE)
-    2. Fuzzy embedding similarity above threshold → merge into existing node
-    3. No match → create new node
     """
 
     def __init__(self, driver: Driver):
@@ -38,10 +32,6 @@ class KGMerger:
         entity_type: str,
         properties: dict | None = None,
     ) -> str:
-        """
-        Insert or update an entity node.
-        Returns the canonical name used in the graph.
-        """
         properties = properties or {}
         canonical = self._resolve_entity(name, entity_type)
 
@@ -57,20 +47,14 @@ class KGMerger:
             return record["name"] if record else canonical
 
     def _resolve_entity(self, name: str, entity_type: str) -> str:
-        """
-        Look for an existing entity that is semantically equivalent to *name*.
-        Returns the canonical name to use (existing or new).
-        """
-        # Quick exact check first (avoids loading embedding model unnecessarily)
         with self.driver.session() as s:
             exact = s.run(
                 "MATCH (e:Entity {name: $name, type: $type}) RETURN e.name LIMIT 1",
                 name=name, type=entity_type,
             ).single()
             if exact:
-                return name   # already exists verbatim
+                return name
 
-        # Fuzzy check via sentence embeddings
         with self.driver.session() as s:
             candidates = s.run(
                 "MATCH (e:Entity {type: $type}) RETURN e.name AS name LIMIT 500",
@@ -84,17 +68,15 @@ class KGMerger:
         query_emb = _encode(name)[0]
         cand_embs = _encode(candidate_names)
 
-        sims = cand_embs @ query_emb   # cosine similarity (normalized)
+        sims = cand_embs @ query_emb
         best_idx = int(np.argmax(sims))
 
         if sims[best_idx] >= cfg.ENTITY_MERGE_THRESHOLD:
             canonical = candidate_names[best_idx]
-            logger.debug(
-                "Entity merge: '%s' → '%s' (sim=%.3f)", name, canonical, sims[best_idx]
-            )
+            logger.debug("Entity merge: '%s' → '%s' (sim=%.3f)", name, canonical, sims[best_idx])
             return canonical
 
-        return name   # new entity
+        return name
 
     # ── Triple upsert ─────────────────────────────────────────────────────────
 
@@ -106,11 +88,6 @@ class KGMerger:
         source_paper: str,
         confidence: float = 1.0,
     ) -> None:
-        """
-        Merge a (subject)-[predicate]->(object) triple.
-        - Confidence is averaged across all sources.
-        - Source list grows with each new paper confirming the relationship.
-        """
         cypher = """
         MERGE (s:Entity {name: $subj}) ON CREATE SET s.type = 'unknown', s.created = timestamp()
         MERGE (o:Entity {name: $obj}) ON CREATE SET o.type = 'unknown', o.created = timestamp()
@@ -120,9 +97,7 @@ class KGMerger:
             r.first_seen    = timestamp(),
             r.last_seen     = timestamp(),
             r.mention_count = 1 ON MATCH SET
-            r.sources       = CASE WHEN $src IN r.sources
-                                THEN r.sources
-                                ELSE r.sources + $src END,
+            r.sources       = CASE WHEN $src IN r.sources THEN r.sources ELSE r.sources + $src END,
             r.confidence    = (r.confidence * r.mention_count + $conf)/ (r.mention_count + 1),
             r.last_seen     = timestamp(),
             r.mention_count = r.mention_count + 1
@@ -133,9 +108,11 @@ class KGMerger:
     # ── Bulk operations ───────────────────────────────────────────────────────
 
     def get_stats(self) -> dict:
-        """Return node and relationship counts."""
+        """Return node, relationship, and vector counts."""
         with self.driver.session() as s:
             nodes = s.run("MATCH (n:Entity) RETURN count(n) AS c").single()["c"]
             rels = s.run("MATCH ()-[r:RELATION]->() RETURN count(r) AS c").single()["c"]
-            papers = s.run("MATCH (p:Paper) RETURN count(p) AS c").single()["c"]
-        return {"entities": nodes, "relations": rels, "papers": papers}
+            papers = s.run("MATCH (n:Entity) WHERE n.type IN ['Paper', 'Document'] RETURN count(n) AS c").single()["c"]
+            vectors = s.run("MATCH (n:Entity) WHERE n.embedding IS NOT NULL RETURN count(n) AS c").single()["c"]
+            
+        return {"entities": nodes, "relations": rels, "papers": papers, "vectors": vectors}
