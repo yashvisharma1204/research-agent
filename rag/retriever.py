@@ -2,19 +2,14 @@
 rag/retriever.py
 Two retrieval strategies, fused into a single context bundle:
   1. Graph traversal — multi-hop Cypher over Neo4j
-  2. Vector search    — FAISS similarity over paper abstracts
+  2. Vector search   — Native Neo4j Vector index similarity
 
 The QueryRouter (router.py) decides which strategy/strategies to use.
 """
 from __future__ import annotations
 
 import logging
-import pickle
-from pathlib import Path
 from typing import NamedTuple
-
-import faiss
-import numpy as np
 from neo4j import Driver
 
 from config import cfg
@@ -22,12 +17,6 @@ from rag.router import route_query
 from utils.embedder import encode as _encode
 
 logger = logging.getLogger(__name__)
-
-_FAISS_INDEX_PATH = Path("data/faiss.index")
-_FAISS_META_PATH = Path("data/faiss_meta.pkl")
-_EMBED_MODEL_NAME = "all-MiniLM-L6-v2"
-
-
 
 # ── Data types ─────────────────────────────────────────────────────────────────
 
@@ -49,64 +38,10 @@ class RetrievalContext(NamedTuple):
     graph_triples: list[GraphTriple]
     vector_results: list[VectorResult]
     entity_names: list[str]
-    route: str = "hybrid"   # which route was used
+    route: str = "hybrid"
 
 
-# ── FAISS vector store ────────────────────────────────────────────────────────
-
-class VectorStore:
-    """Lightweight FAISS store that persists to disk."""
-
-    def __init__(self):
-        self._index: faiss.IndexFlatIP | None = None
-        self._meta: list[dict] = []
-        self._load()
-
-    def _load(self):
-        if _FAISS_INDEX_PATH.exists() and _FAISS_META_PATH.exists():
-            self._index = faiss.read_index(str(_FAISS_INDEX_PATH))
-            with open(_FAISS_META_PATH, "rb") as f:
-                self._meta = pickle.load(f)
-            logger.info("FAISS index loaded (%d vectors)", self._index.ntotal)
-        else:
-            dim = 384   # all-MiniLM-L6-v2 output dim
-            self._index = faiss.IndexFlatIP(dim)
-            self._meta = []
-
-    def _save(self):
-        _FAISS_INDEX_PATH.parent.mkdir(parents=True, exist_ok=True)
-        faiss.write_index(self._index, str(_FAISS_INDEX_PATH))
-        with open(_FAISS_META_PATH, "wb") as f:
-            pickle.dump(self._meta, f)
-
-    def add(self, texts: list[str], doc_ids: list[str]):
-        if not texts:
-            return
-        embs = _encode(texts)
-        self._index.add(embs)
-        self._meta.extend({"text": t, "doc_id": d} for t, d in zip(texts, doc_ids))
-        self._save()
-        logger.debug("Added %d vectors to FAISS", len(texts))
-
-    def search(self, query: str, k: int = 5) -> list[VectorResult]:
-        if self._index.ntotal == 0:
-            return []
-        q_emb = _encode([query])
-        scores, indices = self._index.search(q_emb, min(k, self._index.ntotal))
-        results = []
-        for score, idx in zip(scores[0], indices[0]):
-            if idx == -1:
-                continue
-            meta = self._meta[idx]
-            results.append(VectorResult(
-                text=meta["text"],
-                score=float(score),
-                doc_id=meta["doc_id"],
-            ))
-        return results
-
-
-# ── Graph traversal ───────────────────────────────────────────────────────────
+# ── Unified Graph & Vector Retriever ──────────────────────────────────────────
 
 class GraphRetriever:
     def __init__(self, driver: Driver):
@@ -122,15 +57,13 @@ class GraphRetriever:
     def multi_hop_traverse(
         self,
         entity_names: list[str],
-        hops: int | None = None,
         limit: int | None = None,
     ) -> list[GraphTriple]:
-        hops = hops or cfg.GRAPH_HOP_LIMIT
         limit = limit or cfg.GRAPH_TRIPLE_LIMIT
-
         if not entity_names:
             return []
-        cypher = f"""
+            
+        cypher = """
         MATCH (seed:Entity)
         WHERE seed.name IN $seeds
         OR ANY(s IN $seeds WHERE toLower(seed.name) CONTAINS toLower(s))
@@ -143,7 +76,7 @@ class GraphRetriever:
         LIMIT $limit
         """
         with self.driver.session() as session:
-            records = session.run(cypher, seeds=entity_names, seed_name=entity_names[0] if entity_names else "",limit=limit).data()
+            records = session.run(cypher, seeds=entity_names, limit=limit).data()
 
         return [
             GraphTriple(
@@ -171,24 +104,40 @@ class GraphRetriever:
             logger.warning("Fulltext search failed: %s", exc)
             return []
 
+    def vector_search(self, query: str, k: int = 5) -> list[VectorResult]:
+        """Queries the Native Neo4j vector index."""
+        q_emb = _encode([query])[0].tolist()
+        cypher = """
+        CALL db.index.vector.queryNodes('entity_embedding', $k, $embedding)
+        YIELD node, score
+        RETURN node.text AS text, score, node.name AS doc_id
+        """
+        try:
+            with self.driver.session() as s:
+                records = s.run(cypher, k=k, embedding=q_emb).data()
+            return [
+                VectorResult(text=r["text"], score=r["score"], doc_id=r["doc_id"])
+                for r in records if r.get("text")
+            ]
+        except Exception as exc:
+            logger.warning("Neo4j Vector search failed (is the index built?): %s", exc)
+            return []
 
-# ── Unified retriever ─────────────────────────────────────────────────────────
+
+# ── Retriever orchestrator ────────────────────────────────────────────────────
 
 class Retriever:
     def __init__(self, driver: Driver):
+        self.driver = driver
         self.graph = GraphRetriever(driver)
-        self.vector = VectorStore()
 
     def retrieve(self, query: str) -> RetrievalContext:
-        # 1. Classify intent
         route = route_query(query)
-
-        # 2. Find seed entities from query text
         entity_names = self.graph.extract_entities_from_query(query)
+        
         if not entity_names and route in ("cypher", "hybrid"):
             entity_names = self.graph.fulltext_entity_search(query)
 
-        # 3. Graph traversal (skip for pure vector route)
         graph_triples: list[GraphTriple] = []
         if route in ("cypher", "hybrid"):
             graph_triples = self.graph.multi_hop_traverse(entity_names)
@@ -197,10 +146,9 @@ class Retriever:
             logger.info("Cypher returned %d triples — falling back to vector", len(graph_triples))
             route = "hybrid"
 
-        # 4. Vector search (skip for pure cypher route)
         vector_results: list[VectorResult] = []
         if route in ("vector", "hybrid"):
-            vector_results = self.vector.search(query, k=cfg.VECTOR_TOP_K)
+            vector_results = self.graph.vector_search(query, k=cfg.VECTOR_TOP_K)
 
         logger.info(
             "Retrieval [%s]: %d entities, %d graph triples, %d vector results",
@@ -214,6 +162,15 @@ class Retriever:
         )
 
     def index_document(self, doc: dict):
-        """Add a document's abstract to the FAISS vector index."""
+        """Generates an embedding and saves the text/vector directly to the Neo4j Paper node."""
         text = f"{doc.get('title', '')}. {doc.get('abstract', '')}"
-        self.vector.add([text], [doc.get("id", "")])
+        emb = _encode([text])[0].tolist()
+        doc_id = doc.get("title", doc.get("id", ""))
+        
+        cypher = """
+        MATCH (e:Entity {name: $name})
+        SET e.text = $text, e.embedding = $emb
+        """
+        with self.driver.session() as s:
+            s.run(cypher, name=doc_id, text=text, emb=emb)
+        logger.info("Vector embedding saved to Neo4j for node: %s", doc_id)
