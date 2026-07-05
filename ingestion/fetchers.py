@@ -1,19 +1,18 @@
 """
 ingestion/fetchers.py
-Pulls research papers from arXiv, Semantic Scholar, RSS feeds, and local PDFs.
+Pulls research papers from arXiv, Semantic Scholar, and RSS feeds.
 
 Fetch strategy:
-  1. Curated list  — known seminal paper IDs for popular topics
+  1. Curated list     — known seminal paper IDs for popular topics
   2. Semantic Scholar — citation-sorted search for any topic (foundational first)
   3. arXiv relevance  — fallback
-  4. RSS / PDF        — for live feeds and local documents
+  4. RSS              — for live feeds
 """
 from __future__ import annotations
 
 import hashlib
 import logging
 from datetime import datetime, timezone
-from pathlib import Path
 import time
 import arxiv
 import feedparser
@@ -275,39 +274,6 @@ def fetch_rss(feed_urls: list[str] | None = None, max_per_feed: int = 10) -> lis
         except Exception as exc:
             logger.warning("RSS fetch failed for %s: %s", url, exc)
     logger.info("RSS fetched %d entries", len(results))
-    return results
-
-
-# ── Local PDF ingestion ───────────────────────────────────────────────────────
-
-def fetch_pdfs(folder: str | Path) -> list[dict]:
-    """Extract text from all PDFs in *folder* and return as documents."""
-    try:
-        import fitz
-    except ImportError:
-        logger.warning("PyMuPDF not installed — skipping PDF ingestion")
-        return []
-
-    folder = Path(folder)
-    results = []
-    for pdf_path in folder.glob("**/*.pdf"):
-        try:
-            doc = fitz.open(str(pdf_path))
-            full_text = "\n".join(page.get_text() for page in doc)
-            abstract = full_text[:2000].strip()
-            doc_id = hashlib.md5(str(pdf_path).encode()).hexdigest()
-            results.append(_doc(
-                doc_id=doc_id,
-                title=pdf_path.stem,
-                abstract=abstract,
-                authors=[],
-                source="pdf",
-                url=str(pdf_path),
-                published_date=datetime.now(timezone.utc).isoformat(),
-            ))
-        except Exception as exc:
-            logger.warning("PDF parse failed for %s: %s", pdf_path, exc)
-    logger.info("PDF fetcher found %d documents", len(results))
     return results
 
 
