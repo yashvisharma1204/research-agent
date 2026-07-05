@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 from typing import NamedTuple
 from neo4j import Driver
+import google.generativeai as genai
 
 from config import cfg
 from rag.router import route_query
@@ -46,13 +47,25 @@ class RetrievalContext(NamedTuple):
 class GraphRetriever:
     def __init__(self, driver: Driver):
         self.driver = driver
+        # Ensure Gemini is configured for entity extraction
+        genai.configure(api_key=cfg.GEMINI_API_KEY)
+        self._extractor_model = genai.GenerativeModel(
+            model_name=cfg.LLM_MODEL,
+            system_instruction="You are an entity extractor for a knowledge graph. Extract the core technical concepts, AI models, or frameworks from the query. Return ONLY a comma-separated list of terms. Do not include markdown, explanations, or quotes."
+        )
 
     def extract_entities_from_query(self, query: str) -> list[str]:
-        import re
-        quoted = re.findall(r'"([^"]+)"', query)
-        capitalized = re.findall(r'\b([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)+)\b', query)
-        single_caps = re.findall(r'\b([A-Z]{2,})\b', query)
-        return list(dict.fromkeys(quoted + capitalized + single_caps))
+        """Uses Gemini to intelligently extract entities instead of regex."""
+        try:
+            response = self._extractor_model.generate_content(query)
+            if response.text:
+                entities = [e.strip() for e in response.text.split(",") if e.strip()]
+                logger.debug("Gemini extracted entities: %s", entities)
+                return entities
+            return []
+        except Exception as exc:
+            logger.warning("Gemini entity extraction failed: %s", exc)
+            return []
 
     def multi_hop_traverse(
         self,
@@ -63,10 +76,10 @@ class GraphRetriever:
         if not entity_names:
             return []
             
+        # Updated to strictly use fuzzy case-insensitive matching
         cypher = """
         MATCH (seed:Entity)
-        WHERE seed.name IN $seeds
-        OR ANY(s IN $seeds WHERE toLower(seed.name) CONTAINS toLower(s))
+        WHERE ANY(s IN $seeds WHERE toLower(seed.name) CONTAINS toLower(s))
         MATCH (seed)-[r]-(neighbor:Entity)
         RETURN seed.name AS subject, r.type AS predicate,
             neighbor.name AS obj,
@@ -133,8 +146,11 @@ class Retriever:
 
     def retrieve(self, query: str) -> RetrievalContext:
         route = route_query(query)
+        
+        # 1. Gemini Entity Extraction
         entity_names = self.graph.extract_entities_from_query(query)
         
+        # 2. Fallback to Fulltext if Gemini fails to find anything
         if not entity_names and route in ("cypher", "hybrid"):
             entity_names = self.graph.fulltext_entity_search(query)
 
@@ -142,8 +158,9 @@ class Retriever:
         if route in ("cypher", "hybrid"):
             graph_triples = self.graph.multi_hop_traverse(entity_names)
         
-        if route == "cypher" and len(graph_triples) < 3:
-            logger.info("Cypher returned %d triples — falling back to vector", len(graph_triples))
+        # 3. Cypher Fallback Logic (Automatically forces hybrid/vector if graph is empty)
+        if route == "cypher" and len(graph_triples) == 0:
+            logger.info("Cypher returned 0 triples — auto-falling back to hybrid vector search")
             route = "hybrid"
 
         vector_results: list[VectorResult] = []
