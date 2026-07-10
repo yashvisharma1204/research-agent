@@ -1,14 +1,13 @@
 """
 rag/retriever.py
 Two retrieval strategies, fused into a single context bundle:
-  1. Graph traversal — multi-hop Cypher over Neo4j
+  1. Graph traversal — Multi-hop Cypher reasoning over Neo4j (Day 10)
   2. Vector search   — Native Neo4j Vector index similarity
-
-The QueryRouter (router.py) decides which strategy/strategies to use.
 """
 from __future__ import annotations
 
 import logging
+import math
 from typing import NamedTuple
 from neo4j import Driver
 import google.generativeai as genai
@@ -27,6 +26,7 @@ class GraphTriple(NamedTuple):
     obj: str
     confidence: float
     mention_count: int
+    retrieval_score: float = 0.0
 
 
 class VectorResult(NamedTuple):
@@ -47,7 +47,6 @@ class RetrievalContext(NamedTuple):
 class GraphRetriever:
     def __init__(self, driver: Driver):
         self.driver = driver
-        # Ensure Gemini is configured for entity extraction
         genai.configure(api_key=cfg.GEMINI_API_KEY)
         self._extractor_model = genai.GenerativeModel(
             model_name=cfg.LLM_MODEL,
@@ -72,35 +71,56 @@ class GraphRetriever:
         entity_names: list[str],
         limit: int | None = None,
     ) -> list[GraphTriple]:
+        """
+        Day 10: Traverses up to 2 hops across the graph to extract contextual paths.
+        Day 9: Employs structural density math to calculate accurate relevance scores.
+        """
         limit = limit or cfg.GRAPH_TRIPLE_LIMIT
         if not entity_names:
             return []
             
-        # Updated to strictly use fuzzy case-insensitive matching
+        # Day 10: Variable length multi-hop matching (1 to 2 hops deep)
+        # Avoids tracking circular paths back to the starting seed node.
         cypher = """
         MATCH (seed:Entity)
         WHERE ANY(s IN $seeds WHERE toLower(seed.name) CONTAINS toLower(s))
-        MATCH (seed)-[r]-(neighbor:Entity)
-        RETURN seed.name AS subject, r.type AS predicate,
-            neighbor.name AS obj,
-            coalesce(r.confidence, 1.0) AS confidence,
-            coalesce(r.mention_count, 1) AS mention_count
-        ORDER BY r.confidence DESC
-        LIMIT $limit
+        MATCH path = (seed)-[r*1..2]-(neighbor:Entity)
+        WHERE seed <> neighbor
+        UNWIND relationships(path) AS rel
+        WITH startNode(rel) AS s_node, endNode(rel) AS t_node, rel
+        RETURN DISTINCT 
+            s_node.name AS subject, 
+            type(rel) AS predicate,
+            t_node.name AS obj,
+            coalesce(rel.confidence, 1.0) AS confidence,
+            coalesce(rel.mention_count, 1) AS mention_count
         """
+        
         with self.driver.session() as session:
-            records = session.run(cypher, seeds=entity_names, limit=limit).data()
+            records = session.run(cypher, seeds=entity_names).data()
 
-        return [
-            GraphTriple(
-                subject=r["subject"],
-                predicate=r["predicate"],
-                obj=r["obj"],
-                confidence=r["confidence"],
-                mention_count=r["mention_count"],
+        processed_triples = []
+        for r in records:
+            conf = float(r["confidence"])
+            mentions = int(r["mention_count"])
+            
+            # Day 9 Optimization: Confidence combined with logarithmic structural scale
+            score = conf * math.log(mentions + 1)
+            
+            processed_triples.append(
+                GraphTriple(
+                    subject=r["subject"],
+                    predicate=r["predicate"],
+                    obj=r["obj"],
+                    confidence=conf,
+                    mention_count=mentions,
+                    retrieval_score=score
+                )
             )
-            for r in records
-        ]
+
+        # Rank all compiled multi-hop paths based on their structural scores
+        processed_triples.sort(key=lambda x: x.retrieval_score, reverse=True)
+        return processed_triples[:limit]
 
     def fulltext_entity_search(self, query: str, limit: int = 10) -> list[str]:
         cypher = """
