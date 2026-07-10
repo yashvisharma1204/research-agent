@@ -39,6 +39,7 @@ class RetrievalContext(NamedTuple):
     graph_triples: list[GraphTriple]
     vector_results: list[VectorResult]
     entity_names: list[str]
+    paper_abstracts: list[str] = [] 
     route: str = "hybrid"
 
 
@@ -121,6 +122,27 @@ class GraphRetriever:
         # Rank all compiled multi-hop paths based on their structural scores
         processed_triples.sort(key=lambda x: x.retrieval_score, reverse=True)
         return processed_triples[:limit]
+    
+    def get_abstracts_for_entities(self, entity_names: list[str]) -> list[str]:
+        """Day 11: Fetches raw text/abstracts for nodes involved in the multi-hop paths."""
+        if not entity_names:
+            return []
+            
+        cypher = """
+        MATCH (n:Entity)
+        // Match nodes by name and ensure they actually contain text data
+        WHERE n.name IN $names AND n.text IS NOT NULL
+        RETURN n.name AS name, n.text AS text
+        """
+        
+        try:
+            with self.driver.session() as session:
+                records = session.run(cypher, names=entity_names).data()
+            # Format the output so Gemini knows exactly which paper the text belongs to
+            return [f"[{r['name']} Abstract]: {r['text']}" for r in records]
+        except Exception as exc:
+            logger.warning("Failed to fetch paper abstracts: %s", exc)
+            return []
 
     def fulltext_entity_search(self, query: str, limit: int = 10) -> list[str]:
         cypher = """
@@ -187,14 +209,22 @@ class Retriever:
         if route in ("vector", "hybrid"):
             vector_results = self.graph.vector_search(query, k=cfg.VECTOR_TOP_K)
 
+        paper_abstracts = []
+        if graph_triples:
+            # Extract a unique set of every node name present in our top paths
+            unique_nodes = {t.subject for t in graph_triples}.union({t.obj for t in graph_triples})
+            paper_abstracts = self.graph.get_abstracts_for_entities(list(unique_nodes))
+
         logger.info(
-            "Retrieval [%s]: %d entities, %d graph triples, %d vector results",
-            route, len(entity_names), len(graph_triples), len(vector_results),
+            "Retrieval [%s]: %d entities, %d triples, %d abstracts, %d vectors",
+            route, len(entity_names), len(graph_triples), len(paper_abstracts), len(vector_results)
         )
+        
         return RetrievalContext(
             graph_triples=graph_triples,
             vector_results=vector_results,
             entity_names=entity_names,
+            paper_abstracts=paper_abstracts, 
             route=route,
         )
 
