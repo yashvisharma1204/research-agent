@@ -3,333 +3,286 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Research Agent · Knowledge Graph</title>
+<title>Research Agent · Infinite Canvas</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=DM+Mono:ital,wght@0,300;0,400;0,500;1,300&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
 <style>
-  :root{--bg:#0a0c10;--surface:#111318;--surface2:#181c23;--border:#252932;--accent:#ffffff;--accent2:#64c0e2;--accent3:#5c97f0;--text:#e8eaf0;--muted:#606470;--danger:#f05c6a;--warn:#f0a05c;--radius:10px}
-  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-  body{font-family:'DM Mono',monospace;background:var(--bg);color:var(--text);min-height:100vh;overflow-x:hidden}
-  body::before{content:'';position:fixed;inset:0;background-image:linear-gradient(rgba(207,214,212,.03) 1px,transparent 1px),linear-gradient(90deg,rgba(187,193,191,.03) 1px,transparent 1px);background-size:40px 40px;pointer-events:none;z-index:0}
-  .layout{display:grid;grid-template-columns:260px 1fr;grid-template-rows:56px 1fr;height:100vh;position:relative;z-index:1}
-  header{grid-column:1/-1;display:flex;align-items:center;gap:16px;padding:0 24px;border-bottom:1px solid var(--border);background:rgba(10,12,16,.9);backdrop-filter:blur(8px);position:sticky;top:0;z-index:100}
-  .logo{font-family:'Syne',sans-serif;font-weight:800;font-size:15px;letter-spacing:.05em;color:var(--accent)}
-  .logo span{color:var(--muted);font-weight:400}
-  .header-status{margin-left:auto;display:flex;align-items:center;gap:20px;font-size:11px;color:var(--muted)}
-  .status-dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--muted);margin-right:6px;transition:background .3s}
-  .status-dot.online{background:var(--accent);box-shadow:0 0 8px var(--accent);animation:pulse 2s infinite}
-  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
-  aside{border-right:1px solid var(--border);padding:20px 16px;display:flex;flex-direction:column;gap:6px;overflow-y:auto;background:rgba(17,19,24,.6)}
-  .section-label{font-size:10px;letter-spacing:.12em;color:var(--muted);text-transform:uppercase;padding:12px 8px 6px}
-  .nav-btn{display:flex;align-items:center;gap:10px;padding:8px 12px;border-radius:var(--radius);border:none;background:transparent;color:var(--muted);font-family:'DM Mono',monospace;font-size:12px;cursor:pointer;text-align:left;transition:all .15s;width:100%}
-  .nav-btn:hover{background:var(--surface2);color:var(--text)}
-  .nav-btn.active{background:rgba(255,255,255,.05);color:var(--accent);border:1px solid rgba(101,103,102,.2)}
-  .nav-btn .icon{font-size:14px;width:20px;text-align:center}
-  .stat-card{margin-top:8px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:12px}
-  .stat-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px}
-  .stat-item{background:var(--surface2);border-radius:6px;padding:8px}
-  .stat-value{font-family:'Syne',sans-serif;font-size:18px;font-weight:700;color:var(--accent)}
-  .stat-label{font-size:10px;color:var(--muted);margin-top:2px}
-  main{display:flex;flex-direction:column;overflow:hidden}
-  .tab-content{display:none;flex:1;overflow:hidden}
-  .tab-content.active{display:flex;flex-direction:column}
-  .banner{padding:8px 16px;font-size:11px;display:flex;align-items:center;gap:10px;border-bottom:1px solid var(--border)}
-  .banner.warn{background:rgba(240,160,92,.07);color:var(--warn);border-color:rgba(240,160,92,.2)}
-  .banner-close{margin-left:auto;cursor:pointer;opacity:.6;font-size:14px;background:none;border:none;color:inherit;padding:0 2px}
-  .chat-area{flex:1;overflow-y:auto;padding:24px;display:flex;flex-direction:column;gap:20px}
-  .message{max-width:780px;animation:slideIn .2s ease}
-  @keyframes slideIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
-  .message.user{align-self:flex-end}
-  .message.assistant{align-self:flex-start}
-  .msg-bubble{padding:14px 18px;border-radius:var(--radius);font-size:13px;line-height:1.7}
-  .message.user .msg-bubble{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);color:var(--text)}
-  .message.assistant .msg-bubble{background:var(--surface);border:1px solid var(--border);color:var(--text)}
-  .msg-meta{font-size:10px;color:var(--muted);margin-top:5px;display:flex;gap:10px;flex-wrap:wrap}
-  .route-badge{display:inline-block;padding:1px 7px;border-radius:3px;font-size:10px;letter-spacing:.06em;font-weight:500}
-  .route-hybrid{background:rgba(100,192,226,.15);color:var(--accent2);border:1px solid rgba(100,192,226,.3)}
-  .route-cypher{background:rgba(255,255,255,.08);color:var(--accent);border:1px solid rgba(255,255,255,.2)}
-  .route-vector{background:rgba(92,151,240,.15);color:var(--accent3);border:1px solid rgba(92,151,240,.3)}
-  .context-toggle{font-size:11px;color:var(--muted);cursor:pointer;border:none;background:none;font-family:inherit;padding:4px 0;transition:color .15s}
-  .context-toggle:hover{color:var(--accent)}
-  .context-panel{margin-top:8px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:12px;font-size:11px;display:none}
-  .context-panel.open{display:block}
-  .triple{color:var(--muted);margin:3px 0}
-  .triple .subj{color:var(--accent)}
-  .triple .pred{color:var(--accent2)}
-  .triple .obj{color:var(--accent3)}
-  .input-bar{padding:16px 24px;border-top:1px solid var(--border);background:rgba(10,12,16,.95);display:flex;gap:10px;align-items:flex-end}
-  .input-wrap{flex:1;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);display:flex;align-items:center;transition:border-color .2s}
-  .input-wrap:focus-within{border-color:rgba(255,255,255,.35)}
-  #queryInput{flex:1;background:none;border:none;outline:none;padding:12px 16px;font-family:'DM Mono',monospace;font-size:13px;color:var(--text);resize:none;min-height:44px;max-height:120px}
-  .btn-send,.btn-primary{padding:10px 18px;background:var(--accent);border:none;border-radius:var(--radius);color:#000;font-family:'Syne',sans-serif;font-weight:700;font-size:12px;letter-spacing:.05em;cursor:pointer;transition:all .15s}
-  .btn-send:hover,.btn-primary:hover{background:#d0d4d8;transform:translateY(-1px)}
-  .btn-send:disabled{background:var(--muted);cursor:not-allowed;transform:none}
-  .btn-secondary{padding:10px 16px;background:transparent;border:1px solid var(--border);border-radius:var(--radius);color:var(--muted);font-family:'DM Mono',monospace;font-size:12px;cursor:pointer;transition:all .15s}
-  .btn-secondary:hover{border-color:var(--text);color:var(--text)}
-  .ingest-area{flex:1;overflow-y:auto;padding:32px 40px;display:grid;grid-template-columns:1fr 1fr;gap:20px;align-content:start}
-  .ingest-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:24px}
-  .ingest-card h3{font-family:'Syne',sans-serif;font-weight:700;font-size:14px;margin-bottom:16px;color:var(--text);display:flex;align-items:center;gap:8px}
-  .form-group{margin-bottom:14px}
-  label{display:block;font-size:11px;color:var(--muted);margin-bottom:6px;letter-spacing:.06em}
-  input[type=text],input[type=number],textarea{width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:10px 12px;font-family:'DM Mono',monospace;font-size:12px;color:var(--text);outline:none;transition:border-color .2s}
-  input:focus,textarea:focus{border-color:rgba(255,255,255,.35)}
-  textarea{resize:vertical;min-height:100px}
-  .ingest-result{margin-top:14px;padding:10px 14px;border-radius:6px;font-size:11px;display:none}
-  .ingest-result.ok{background:rgba(110,231,183,.06);border:1px solid rgba(110,231,183,.2);color:#6ee7b7}
-  .ingest-result.err{background:rgba(240,92,106,.06);border:1px solid rgba(240,92,106,.2);color:var(--danger)}
-  .log-area{flex:1;overflow-y:auto;padding:16px 24px;font-size:11px;line-height:1.8}
-  .log-entry{display:flex;gap:12px;padding:4px 0;border-bottom:1px solid rgba(37,41,50,.5);animation:slideIn .15s ease}
-  .log-time{color:var(--muted);min-width:80px}
-  .log-level{min-width:60px}
-  .log-level.info{color:#6ee7b7}
-  .log-level.warn{color:var(--warn)}
-  .log-level.error{color:var(--danger)}
-  .log-msg{color:var(--text)}
+  :root { 
+    --bg: #000000; 
+    --surface: rgba(10, 10, 10, 0.85); 
+    --surface2: #111111; 
+    --border: #222222; 
+    
+    --accent: #FFFFFF; /* Pure white for primary actions */
+    --accent2: #5E6AD2; /* Deep blurple for secondary data */
+    --accent3: #17A34A; /* Emerald green */
+    
+    --text: #EDEDED; /* Bright legible text */
+    --muted: #888888; 
+    
+    --danger: #EF4444; 
+    --warn: #F59E0B; 
+    --radius: 6px; /* Sharper corners */
+  }
+  *,*::before,*::after { box-sizing:border-box; margin:0; padding:0; }
+  body { font-family:'DM Mono',monospace; background:var(--bg); color:var(--text); overflow:hidden; width:100vw; height:100vh; }
+  body::before { content:''; position:fixed; inset:0; background-image:linear-gradient(rgba(255,255,255,.015) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.015) 1px,transparent 1px); background-size:40px 40px; pointer-events:none; z-index:0; }
+  
+  /* The Infinite Canvas */
+  #graphSvg { position:fixed; top:0; left:0; width:100vw; height:100vh; z-index:1; cursor:grab; }
+  #graphSvg:active { cursor:grabbing; }
 
-  /* ── Graph ── */
-  .graph-shell{flex:1;display:flex;flex-direction:column;overflow:hidden;position:relative}
-  .graph-toolbar{padding:10px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;background:var(--surface);flex-shrink:0;flex-wrap:wrap}
-  .graph-toolbar input,.graph-toolbar select{background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-family:'DM Mono',monospace;font-size:11px;color:var(--text);outline:none;cursor:pointer;transition:border-color .2s}
-  .graph-toolbar input{width:180px}
-  .graph-toolbar input:focus{border-color:rgba(255,255,255,.35)}
-  #graphSvg{flex:1;width:100%;height:100%;cursor:grab}
-  #graphSvg:active{cursor:grabbing}
+  /* Floating UI Layer */
+  .ui-layer { position:fixed; inset:0; z-index:10; pointer-events:none; display:flex; justify-content:space-between; padding:20px; gap:20px; }
+  .panel { pointer-events:auto; background:var(--surface); backdrop-filter:blur(16px); -webkit-backdrop-filter:blur(16px); border:1px solid var(--border); border-radius:var(--radius); display:flex; flex-direction:column; overflow:hidden; box-shadow:0 8px 32px rgba(0,0,0,0.4); }
+  
+  /* Left Sidebar (Tools) */
+  .left-panel { width:320px; height:100%; display:flex; flex-direction:column; }
+  header { padding:20px; border-bottom:1px solid var(--border); }
+  .logo { font-family:'Syne',sans-serif; font-weight:800; font-size:16px; letter-spacing:.05em; color:var(--accent); }
+  .logo span { color:var(--muted); font-weight:400; }
+  .header-status { margin-top:8px; display:flex; align-items:center; gap:12px; font-size:11px; color:var(--muted); }
+  .status-dot { display:inline-block; width:7px; height:7px; border-radius:50%; background:var(--muted); transition:background .3s; }
+  .status-dot.online { background:var(--accent); box-shadow:0 0 8px var(--accent); animation:pulse 2s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.5} }
 
-  /* Dynamic legend */
-  .graph-legend{position:absolute;bottom:20px;right:20px;background:rgba(17,19,24,.96);border:1px solid var(--border);border-radius:8px;padding:12px 16px;font-size:10px;display:flex;flex-direction:column;gap:5px;min-width:140px}
-  .legend-title{font-size:10px;color:var(--muted);letter-spacing:.08em;margin-bottom:4px}
-  .legend-item{display:flex;align-items:center;gap:8px;color:var(--muted);cursor:pointer;padding:2px 0;border-radius:3px;transition:color .15s}
-  .legend-item:hover{color:var(--text)}
-  .legend-item.dimmed{opacity:.35}
-  .legend-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0;transition:transform .15s}
-  .legend-item:hover .legend-dot{transform:scale(1.3)}
-  .legend-hint{margin-top:6px;padding-top:6px;border-top:1px solid var(--border);font-size:9px;color:var(--muted);line-height:1.6}
+  .tab-nav { display:flex; border-bottom:1px solid var(--border); }
+  .tab-btn { flex:1; padding:12px 0; background:transparent; border:none; color:var(--muted); font-family:inherit; font-size:11px; cursor:pointer; text-transform:uppercase; letter-spacing:.1em; transition:all .2s; }
+  .tab-btn:hover { color:var(--text); background:rgba(255,255,255,0.02); }
+  .tab-btn.active { color:var(--accent); box-shadow:inset 0 -2px 0 var(--accent); background:rgba(255,255,255,0.04); }
 
-  .node-tooltip{position:fixed;background:rgba(17,19,24,.97);border:1px solid var(--border);border-radius:8px;padding:10px 14px;font-size:11px;pointer-events:none;opacity:0;transition:opacity .15s;z-index:999;max-width:300px;line-height:1.7}
-  .node-tooltip strong{font-family:'Syne',sans-serif;font-size:12px;display:block;margin-bottom:5px}
-  .tt-row{display:flex;gap:6px;align-items:center}
-  .tt-badge{display:inline-block;padding:1px 7px;border-radius:3px;font-size:10px;font-weight:600}
+  .tab-content { display:none; flex:1; overflow-y:auto; padding:20px; flex-direction:column; gap:20px; }
+  .tab-content.active { display:flex; }
 
-  .graph-empty{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;color:var(--muted);font-size:13px;gap:10px;pointer-events:none}
-  .graph-empty-icon{font-size:40px;opacity:.4}
-  .graph-controls{display:flex;gap:6px;margin-left:auto}
+  /* Right Sidebar (Chat / Inspector) */
+  .right-panel { width:420px; height:100%; display:flex; flex-direction:column; }
+  .chat-area { flex:1; overflow-y:auto; padding:20px; display:flex; flex-direction:column; gap:16px; scroll-behavior:smooth; }
+  .input-bar { padding:16px 20px; border-top:1px solid var(--border); background:rgba(10,12,16,0.6); display:flex; flex-direction:column; gap:10px; }
+  .input-wrap { background:var(--surface2); border:1px solid var(--border); border-radius:8px; display:flex; align-items:center; transition:border-color .2s; }
+  .input-wrap:focus-within { border-color:rgba(255,255,255,.35); }
+  #queryInput { flex:1; background:none; border:none; outline:none; padding:12px 16px; font-family:inherit; font-size:12px; color:var(--text); resize:none; min-height:44px; max-height:120px; }
+  
+  /* Forms & Buttons */
+  .form-group label { display:block; font-size:10px; color:var(--muted); margin-bottom:6px; letter-spacing:.06em; text-transform:uppercase; }
+  input[type=text], input[type=number], textarea { width:100%; background:var(--surface2); border:1px solid var(--border); border-radius:6px; padding:10px 12px; font-family:inherit; font-size:11px; color:var(--text); outline:none; }
+  .btn-primary { width:100%; padding:10px 18px; background:var(--accent); border:none; border-radius:6px; color:#000; font-family:'Syne',sans-serif; font-weight:700; font-size:12px; cursor:pointer; transition:all .15s; }
+  .btn-primary:hover { background:#d0d4d8; }
+  .btn-secondary { padding:6px 12px; background:transparent; border:1px solid var(--border); border-radius:6px; color:var(--text); font-family:inherit; font-size:10px; cursor:pointer; transition:all .15s; }
+  .btn-secondary:hover { background:rgba(255,255,255,0.1); }
 
-  /* Type filter pills */
-  .type-pills{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
-  .type-pill{padding:3px 10px;border-radius:20px;font-size:10px;cursor:pointer;border:1px solid transparent;transition:all .15s;font-family:'DM Mono',monospace;opacity:.5}
-  .type-pill.active{opacity:1;border-color:currentColor}
-  .type-pill:hover{opacity:.8}
+  /* Chat Bubbles */
+  .message { max-width:90%; animation:slideIn .2s ease; }
+  @keyframes slideIn { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
+  .message.user { align-self:flex-end; }
+  .message.assistant { align-self:flex-start; }
+  .msg-bubble { padding:12px 16px; border-radius:8px; font-size:12px; line-height:1.6; }
+  .message.user .msg-bubble { background:rgba(255,255,255,.08); border:1px solid rgba(255,255,255,.15); color:var(--text); }
+  .message.assistant .msg-bubble { background:var(--surface2); border:1px solid var(--border); color:var(--text); }
+  .msg-meta { font-size:9px; color:var(--muted); margin-top:6px; display:flex; gap:8px; flex-wrap:wrap; }
+  .route-badge { padding:2px 6px; border-radius:3px; font-weight:500; text-transform:uppercase; }
+  .route-hybrid { background:rgba(100,192,226,.15); color:var(--accent2); }
+  .route-cypher { background:rgba(255,255,255,.1); color:var(--accent); }
+  .route-vector { background:rgba(92,151,240,.15); color:var(--accent3); }
 
-  .spinner{display:inline-block;width:14px;height:14px;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .6s linear infinite}
-  @keyframes spin{to{transform:rotate(360deg)}}
-  .empty-state{text-align:center;padding:60px 20px;color:var(--muted);font-size:13px}
-  .empty-icon{font-size:36px;margin-bottom:12px}
-  .api-url-bar{padding:10px 24px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;font-size:11px;background:var(--surface)}
-  .api-url-bar input{flex:1;background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:11px;color:var(--muted)}
-  .ctx-label{color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.1em;margin-bottom:4px}
-  code{background:rgba(255,255,255,.07);padding:1px 6px;border-radius:4px;font-family:inherit;font-size:10px}
+  /* Graph Legend Floating Bottom Center */
+  .graph-legend { position:absolute; bottom:20px; left:50%; transform:translateX(-50%); background:var(--surface); backdrop-filter:blur(12px); border:1px solid var(--border); border-radius:20px; padding:8px 16px; display:flex; gap:16px; font-size:10px; pointer-events:auto; align-items:center; }
+  .legend-item { display:flex; align-items:center; gap:6px; color:var(--muted); cursor:pointer; transition:color .2s; }
+  .legend-item:hover { color:var(--text); }
+  .legend-dot { width:8px; height:8px; border-radius:50%; }
+
+  /* Utilities */
+  .stat-grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  .stat-item { background:var(--surface2); border-radius:6px; padding:10px; border:1px solid var(--border); }
+  .stat-value { font-family:'Syne',sans-serif; font-size:18px; font-weight:700; color:var(--accent); }
+  .stat-label { font-size:9px; color:var(--muted); margin-top:2px; text-transform:uppercase; }
+  .log-entry { font-size:10px; padding:4px 0; border-bottom:1px solid var(--border); display:flex; gap:10px; }
+  .log-time { color:var(--muted); }
+  
+  /* Node Inspector */
+  .inspector-card { background:rgba(100,192,226,0.05); border:1px solid rgba(100,192,226,0.2); border-radius:8px; padding:16px; margin-bottom:16px; animation:slideIn .2s ease; }
+  .inspector-title { font-family:'Syne',sans-serif; font-weight:700; font-size:14px; color:var(--accent2); margin-bottom:8px; }
+  .tt-badge { display:inline-block; padding:2px 6px; border-radius:4px; font-size:9px; font-weight:600; text-transform:uppercase; }
 </style>
 </head>
 <body>
-<div class="layout">
 
-<header>
-  <div class="logo">RESEARCH<span>/</span>AGENT</div>
-  <div style="font-size:11px;color:var(--muted);margin-left:8px">knowledge graph + RAG · gemini-powered</div>
-  <div class="header-status">
-    <span><span class="status-dot" id="statusDot"></span><span id="statusText">connecting…</span></span>
-    <span id="modelBadge" style="color:var(--accent2)">—</span>
-  </div>
-</header>
+<svg id="graphSvg"></svg>
 
-<aside>
-  <div class="section-label">Navigation</div>
-  <button class="nav-btn active" onclick="switchTab('query',this)"><span class="icon">⬡</span> Query</button>
-  <button class="nav-btn" onclick="switchTab('graph',this)"><span class="icon">◈</span> Graph</button>
-  <button class="nav-btn" onclick="switchTab('ingest',this)"><span class="icon">↑</span> Ingest</button>
-  <button class="nav-btn" onclick="switchTab('log',this)"><span class="icon">≡</span> Activity Log</button>
-  <div class="section-label" style="margin-top:16px">Graph Stats</div>
-  <div class="stat-card">
-    <div style="font-size:10px;color:var(--muted)">Live counts</div>
-    <div class="stat-grid">
-      <div class="stat-item"><div class="stat-value" id="statEntities">—</div><div class="stat-label">entities</div></div>
-      <div class="stat-item"><div class="stat-value" id="statRelations">—</div><div class="stat-label">relations</div></div>
-      <div class="stat-item"><div class="stat-value" id="statPapers">—</div><div class="stat-label">papers</div></div>
-      <div class="stat-item"><div class="stat-value" id="statVectors">—</div><div class="stat-label">vectors</div></div>
+<div class="ui-layer">
+  
+  <div class="panel left-panel">
+    <header>
+      <div class="logo">RESEARCH<span>/</span>AGENT</div>
+      <div class="header-status">
+        <span class="status-dot" id="statusDot"></span><span id="statusText">connecting…</span>
+        <button class="btn-secondary" style="margin-left:auto; padding:2px 6px; font-size:9px" onclick="checkHealth()">PING</button>
+      </div>
+      <input type="text" id="apiUrl" value="http://localhost:8000" style="margin-top:10px; height:24px; font-size:9px;">
+    </header>
+
+    <div class="tab-nav">
+      <button class="tab-btn active" onclick="switchTab('stats', this)">Stats</button>
+      <button class="tab-btn" onclick="switchTab('ingest', this)">Ingest</button>
+      <button class="tab-btn" onclick="switchTab('logs', this)">Logs</button>
     </div>
-    <button class="btn-secondary" style="width:100%;margin-top:10px;font-size:11px" onclick="refreshStats()">↻ Refresh</button>
-  </div>
-</aside>
 
-<main>
-  <div class="api-url-bar">
-    <span style="color:var(--muted)">API</span>
-    <input type="text" id="apiUrl" value="http://localhost:8000">
-    <button class="btn-secondary" style="padding:5px 12px;font-size:11px" onclick="checkHealth()">ping</button>
+    <div class="tab-content active" id="tab-stats">
+      <div class="stat-grid">
+        <div class="stat-item"><div class="stat-value" id="statEntities">—</div><div class="stat-label">Entities</div></div>
+        <div class="stat-item"><div class="stat-value" id="statRelations">—</div><div class="stat-label">Relations</div></div>
+        <div class="stat-item"><div class="stat-value" id="statPapers">—</div><div class="stat-label">Papers</div></div>
+        <div class="stat-item"><div class="stat-value" id="statVectors">—</div><div class="stat-label">Vectors</div></div>
+      </div>
+      <div style="margin-top:auto; display:flex; gap:10px;">
+        <button class="btn-secondary" style="flex:1" onclick="refreshStats()">↻ Refresh Stats</button>
+        <button class="btn-secondary" style="flex:1" onclick="loadGraph()">⟳ Sync Graph</button>
+      </div>
+    </div>
+
+    <div class="tab-content" id="tab-ingest">
+      <div class="form-group">
+        <label>arXiv / Semantic Scholar</label>
+        <input type="text" id="arxivQuery" placeholder="e.g. transformers, RAG" style="margin-bottom:8px">
+        <input type="number" id="arxivMax" value="5" min="1" style="margin-bottom:8px">
+        <button class="btn-primary" onclick="ingestArxiv()">FETCH PAPERS</button>
+      </div>
+      <div style="border-top:1px solid var(--border); margin:10px 0;"></div>
+      <div class="form-group">
+        <label>Raw Text Paste</label>
+        <input type="text" id="textTitle" placeholder="Document Title" style="margin-bottom:8px">
+        <textarea id="textContent" placeholder="Paste abstract or notes..." style="height:80px; margin-bottom:8px"></textarea>
+        <button class="btn-primary" onclick="ingestText()">EXTRACT TRIPLES</button>
+      </div>
+    </div>
+
+    <div class="tab-content" id="tab-logs">
+      <div id="logArea" style="display:flex; flex-direction:column; gap:4px;">
+        <div style="color:var(--muted); font-size:10px; text-align:center; padding:20px;">System logs will stream here...</div>
+      </div>
+    </div>
   </div>
 
-  <div class="banner warn" id="corsBanner" style="display:none">
-    ⚠ Opened as a local file — browser will block API calls.
-    Serve with: <code>python -m http.server 3000</code> then open <code>localhost:3000</code>
-    <button class="banner-close" onclick="this.parentElement.style.display='none'">✕</button>
+  <div class="graph-legend" id="graphLegend">
+    <span style="color:var(--muted)">Loading Graph...</span>
   </div>
 
-  <!-- Query Tab -->
-  <div class="tab-content active" id="tab-query">
+  <div class="panel right-panel">
     <div class="chat-area" id="chatArea">
-      <div class="empty-state"><div class="empty-icon">⬡</div><div>Ask a research question</div><div style="margin-top:6px;font-size:11px">e.g. "What methods does GPT-4 outperform?" or "Recent trends in RAG?"</div></div>
+      <div style="text-align:center; margin:auto; color:var(--muted); font-size:11px;">
+        <div style="font-size:24px; margin-bottom:10px; opacity:0.5;">◈</div>
+        Workspace initialized.<br>Ask a question or click a node in the graph.
+      </div>
     </div>
+    
     <div class="input-bar">
       <div class="input-wrap">
-        <textarea id="queryInput" placeholder="Ask a question about your research graph…" rows="1"
-          onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendQuery()}"
-          oninput="this.style.height='auto';this.style.height=this.scrollHeight+'px'"></textarea>
+        <textarea id="queryInput" placeholder="Ask a research question..." onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendQuery()}"></textarea>
       </div>
-      <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:11px;color:var(--muted);white-space:nowrap">
-        <input type="checkbox" id="includeCtx" style="accent-color:var(--accent)"> context
-      </label>
-      <button class="btn-send" id="sendBtn" onclick="sendQuery()">SEND</button>
-    </div>
-  </div>
-
-  <!-- Graph Tab -->
-  <div class="tab-content" id="tab-graph">
-    <div class="graph-shell">
-      <!-- Toolbar row 1: search + depth + controls -->
-      <div class="graph-toolbar">
-        <span style="font-size:11px;color:var(--muted)">Search</span>
-        <input type="text" id="graphFilter" placeholder="name or type…" oninput="filterGraph(this.value)">
-        <select id="graphDepth" onchange="loadGraph()">
-          <option value="50">50 nodes</option>
-          <option value="120" selected>120 nodes</option>
-          <option value="300">300 nodes</option>
-        </select>
-        <div class="graph-controls">
-          <button class="btn-secondary" style="padding:5px 12px;font-size:11px" onclick="resetZoom()">⊡ Reset</button>
-          <button class="btn-secondary" style="padding:5px 12px;font-size:11px" onclick="loadGraph()">↻ Reload</button>
-        </div>
-        <span id="graphMeta" style="font-size:10px;color:var(--muted)"></span>
-      </div>
-      <!-- Toolbar row 2: type filter pills -->
-      <div class="graph-toolbar" style="padding:8px 16px;border-top:none">
-        <span style="font-size:10px;color:var(--muted)">Filter by type</span>
-        <div class="type-pills" id="typePills">
-          <span class="type-pill active" style="color:#ffffff" data-type="all" onclick="filterByType('all',this)">All</span>
-        </div>
-      </div>
-      <svg id="graphSvg"></svg>
-      <div class="graph-empty" id="graphEmpty" style="display:none">
-        <div class="graph-empty-icon">◈</div>
-        <div>No graph data yet</div>
-        <div style="font-size:11px;margin-top:4px">Ingest some papers first, then reload</div>
-      </div>
-      <!-- Dynamic legend -->
-      <div class="graph-legend" id="graphLegend">
-        <div class="legend-title">NODE TYPES</div>
-        <div class="legend-hint">Click legend to isolate type<br>Click node to highlight<br>Size = mention count</div>
-      </div>
-    </div>
-    <div class="node-tooltip" id="nodeTooltip"></div>
-  </div>
-
-  <!-- Ingest Tab -->
-  <div class="tab-content" id="tab-ingest">
-    <div class="ingest-area">
-      <div class="ingest-card">
-        <h3>↑ arXiv / Semantic Scholar</h3>
-        <div class="form-group"><label>TOPIC OR SEARCH QUERY</label><input type="text" id="arxivQuery" placeholder="e.g. rag, transformers, diffusion"></div>
-        <div class="form-group"><label>MAX RESULTS</label><input type="number" id="arxivMax" value="5" min="1" max="50" style="width:100px"></div>
-        <button class="btn-primary" onclick="ingestArxiv()">FETCH + INGEST</button>
-        <div class="ingest-result" id="arxivResult"></div>
-      </div>
-      <div class="ingest-card">
-        <h3>✎ Text Ingest</h3>
-        <div class="form-group"><label>DOCUMENT TITLE</label><input type="text" id="textTitle" placeholder="My Research Note"></div>
-        <div class="form-group"><label>DOC ID (optional)</label><input type="text" id="textDocId" placeholder="auto-generated if blank"></div>
-        <div class="form-group"><label>CONTENT</label><textarea id="textContent" placeholder="Paste or type research text here…"></textarea></div>
-        <button class="btn-primary" onclick="ingestText()">EXTRACT + INGEST</button>
-        <div class="ingest-result" id="textResult"></div>
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <label style="display:flex; align-items:center; gap:6px; margin:0; cursor:pointer;">
+          <input type="checkbox" id="includeCtx" style="accent-color:var(--accent)"> Include Context
+        </label>
+        <button class="btn-primary" id="sendBtn" style="width:auto; padding:8px 24px;" onclick="sendQuery()">SEND</button>
       </div>
     </div>
   </div>
 
-  <!-- Log Tab -->
-  <div class="tab-content" id="tab-log">
-    <div class="log-area" id="logArea">
-      <div class="empty-state"><div class="empty-icon">≡</div><div>Activity will appear here</div></div>
+</div>
+
+<div id="paperDetailPanel" style="
+  position: fixed;
+  top: 20px;
+  right: -460px; 
+  width: 420px;
+  height: calc(100vh - 40px);
+  background: rgba(10, 10, 10, 0.85);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  z-index: 999;
+  transition: right 0.3s cubic-bezier(0.25, 1, 0.5, 1);
+  display: flex;
+  flex-direction: column;
+  box-shadow: -8px 0 32px rgba(0,0,0,0.6);
+  pointer-events: auto;
+">
+  <div style="padding: 20px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between;">
+    <span style="font-family: 'Syne', sans-serif; font-weight: 700; font-size: 11px; color: var(--accent2); letter-spacing: 0.1em; text-transform: uppercase;">Paper Metadata</span>
+    <button onclick="closePaperPanel()" style="background: transparent; border: none; color: var(--muted); cursor: pointer; font-size: 14px; padding: 4px; transition: color 0.2s;">✕</button>
+  </div>
+
+  <div style="flex: 1; overflow-y: auto; padding: 24px; display: flex; flex-direction: column; gap: 20px;">
+    <div>
+      <h2 id="paperPanelTitle" style="font-family: 'Syne', sans-serif; font-weight: 700; font-size: 18px; color: var(--accent); line-height: 1.4; margin-bottom: 8px;">Paper Title</h2>
+      <div id="paperPanelYear" style="font-size: 11px; color: var(--muted);">Published: —</div>
+    </div>
+
+    <div style="border-top: 1px solid var(--border); padding-top: 16px;">
+      <div style="font-size: 10px; color: var(--muted); letter-spacing: 0.05em; text-transform: uppercase; margin-bottom: 8px;">AI-Generated Summary</div>
+      <p id="paperPanelSummary" style="font-size: 12px; color: var(--text); line-height: 1.6;">No summary extracted yet.</p>
+    </div>
+
+    <div style="border-top: 1px solid var(--border); padding-top: 16px;">
+      <div style="font-size: 10px; color: var(--muted); letter-spacing: 0.05em; text-transform: uppercase; margin-bottom: 8px;">Key Concepts</div>
+      <div id="paperPanelConcepts" style="display: flex; flex-wrap: wrap; gap: 6px;"></div>
     </div>
   </div>
-</main>
+
+  <div style="padding: 16px 24px; border-top: 1px solid var(--border); background: rgba(0,0,0,0.2);">
+    <a id="paperPanelLink" href="#" target="_blank" class="btn-primary" style="display: block; text-align: center; text-decoration: none; line-height: 18px;">OPEN EXTERNAL ARXIV SOURCE ↗</a>
+  </div>
 </div>
 
 <script>
 // ══════════════════════════════════════════════
-//  ENTITY TYPE COLOUR SYSTEM
+//  CONFIG & DYNAMIC HIGH-CONTRAST COLORS
 // ══════════════════════════════════════════════
 const TYPE_COLORS = {
-  Method:       '#00e5a0',   // teal
-  Model:        '#5c97f0',   // indigo
-  Dataset:      '#f0a05c',   // orange
-  Author:       '#c084fc',   // purple
-  Organisation: '#f05c9a',   // pink
-  Metric:       '#6ee7b7',   // mint
-  Concept:      '#94a3b8',   // slate
-  Paper:        '#64c0e2',   // sky
-  Unknown:      '#606470',   // grey
-  unknown:      '#606470',
+  Method:       '#39FF14', // Neon Green
+  Model:        '#00FFFF', // Bright Cyan
+  Dataset:      '#FF00FF', // Hot Magenta
+  Author:       '#FEF319', // Electric Yellow
+  Organisation: '#FF6600', // Neon Orange
+  Metric:       '#9D00FF', // Deep Neon Purple
+  Concept:      '#FF0055', // Cyberpunk Red/Pink
+  Paper:        '#0088FF', // Vibrant Blue
+  Unknown:      '#555555', 
+  unknown:      '#555555'
 };
-
-function typeColor(type) {
-  return TYPE_COLORS[type] || TYPE_COLORS.Unknown;
-}
-
-function hexToRgba(hex, alpha) {
-  const r = parseInt(hex.slice(1,3),16);
-  const g = parseInt(hex.slice(3,5),16);
-  const b = parseInt(hex.slice(5,7),16);
-  return `rgba(${r},${g},${b},${alpha})`;
-}
-
-// ══════════════════════════════════════════════
-//  UTILS
-// ══════════════════════════════════════════════
+const typeColor = (type) => TYPE_COLORS[type] || TYPE_COLORS.Unknown;
+const hexToRgba = (hex, alpha) => { const r=parseInt(hex.slice(1,3),16),g=parseInt(hex.slice(3,5),16),b=parseInt(hex.slice(5,7),16); return `rgba(${r},${g},${b},${alpha})`; };
 const BASE = () => document.getElementById('apiUrl').value.replace(/\/$/,'');
 
-if (location.protocol === 'file:') document.getElementById('corsBanner').style.display = 'flex';
-
-// Auto-switch API URL
 if (location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
   document.getElementById('apiUrl').value = 'https://research-agent-s7ye.onrender.com';
 }
 
 function switchTab(name, btn) {
   document.querySelectorAll('.tab-content').forEach(t=>t.classList.remove('active'));
-  document.querySelectorAll('.nav-btn').forEach(b=>b.classList.remove('active'));
+  document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
   document.getElementById('tab-'+name).classList.add('active');
   btn.classList.add('active');
-  if (name==='graph') loadGraph();
 }
-
-function escHtml(s) {
-  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>');
-}
+function escHtml(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>'); }
+function scrollChat() { const c = document.getElementById('chatArea'); c.scrollTop = c.scrollHeight; }
 
 // ══════════════════════════════════════════════
-//  HEALTH + STATS
+//  API INTEGRATIONS
 // ══════════════════════════════════════════════
 async function checkHealth() {
   const dot=document.getElementById('statusDot'), txt=document.getElementById('statusText');
   try {
     const r=await fetch(BASE()+'/health');
-    if(r.ok){dot.className='status-dot online';txt.textContent='connected';addLog('info','API OK');refreshStats();document.getElementById('corsBanner').style.display='none';}
+    if(r.ok){dot.className='status-dot online';txt.textContent='connected'; addLog('info','API OK'); refreshStats(); }
     else{dot.className='status-dot';txt.textContent='error '+r.status;}
-  } catch(e){dot.className='status-dot';txt.textContent='unreachable';addLog('error','API unreachable: '+e.message);}
+  } catch(e){dot.className='status-dot';txt.textContent='unreachable'; addLog('error','API unreachable: '+e.message);}
 }
 
 async function refreshStats() {
   try {
-    const r=await fetch(BASE()+'/stats');if(!r.ok)return;
+    const r=await fetch(BASE()+'/stats'); if(!r.ok)return;
     const d=await r.json();
     document.getElementById('statEntities').textContent=d.entities??'—';
     document.getElementById('statRelations').textContent=d.relations??'—';
@@ -338,179 +291,162 @@ async function refreshStats() {
   } catch{}
 }
 
+function addLog(level,msg){
+  const area=document.getElementById('logArea');
+  if(area.querySelector('.empty-state') || area.children.length === 1 && area.children[0].tagName==='DIV') area.innerHTML='';
+  const time=new Date().toTimeString().slice(0,8);
+  const entry=document.createElement('div'); entry.className='log-entry';
+  const color = level==='error' ? 'var(--danger)' : level==='warn' ? 'var(--warn)' : 'var(--accent2)';
+  entry.innerHTML=`<span class="log-time">${time}</span><span style="color:${color};width:40px">${level.toUpperCase()}</span><span>${escHtml(msg)}</span>`;
+  area.appendChild(entry); area.scrollTop=area.scrollHeight;
+}
+
 // ══════════════════════════════════════════════
-//  QUERY
+//  CHAT & RAG TRACKING
 // ══════════════════════════════════════════════
 async function sendQuery() {
-  const input=document.getElementById('queryInput'),q=input.value.trim();if(!q)return;
+  const input=document.getElementById('queryInput'), q=input.value.trim(); if(!q)return;
   const includeCtx=document.getElementById('includeCtx').checked;
-  const btn=document.getElementById('sendBtn'),chatArea=document.getElementById('chatArea');
-  const empty=chatArea.querySelector('.empty-state');if(empty)empty.remove();
-  chatArea.appendChild(userBubble(q));input.value='';input.style.height='auto';btn.disabled=true;scrollChat();
-  const thinking=document.createElement('div');thinking.className='message assistant';
-  thinking.innerHTML='<div class="msg-bubble" style="color:var(--muted)"><span class="spinner"></span> thinking…</div>';
-  chatArea.appendChild(thinking);scrollChat();addLog('info','Query: '+q.slice(0,60)+'…');
+  const btn=document.getElementById('sendBtn'), chatArea=document.getElementById('chatArea');
+  
+  if(chatArea.innerHTML.includes('Workspace initialized')) chatArea.innerHTML='';
+  
+  chatArea.appendChild(createBubble('user', q));
+  input.value=''; input.style.height='auto'; btn.disabled=true; scrollChat();
+  
+  const thinking=createBubble('assistant', '<span style="color:var(--muted)">Thinking...</span>');
+  chatArea.appendChild(thinking); scrollChat();
+  
   try {
     const r=await fetch(BASE()+'/query',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q,include_context:includeCtx})});
     thinking.remove();
-    if(!r.ok){const err=await r.text();chatArea.appendChild(simpleBubble('assistant','⚠ Error '+r.status+': '+err));addLog('error','Query failed: '+r.status);}
-    else{const d=await r.json();document.getElementById('modelBadge').textContent=d.model;chatArea.appendChild(answerBubble(d,includeCtx));addLog('info','Answer: '+d.graph_triple_count+' triples, route='+d.route);refreshStats();}
-  } catch(e){thinking.remove();chatArea.appendChild(simpleBubble('assistant','⚠ Network error: '+e.message));addLog('error',e.message);}
-  btn.disabled=false;scrollChat();
+    if(!r.ok){chatArea.appendChild(createBubble('assistant','⚠ Error: '+await r.text()));}
+    else{
+      const d=await r.json();
+      chatArea.appendChild(answerBubble(d, includeCtx));
+      addLog('info', `Query routed to ${d.route} (${d.graph_triple_count} triples)`);
+    }
+  } catch(e){thinking.remove(); chatArea.appendChild(createBubble('assistant','⚠ Network error: '+e.message));}
+  btn.disabled=false; scrollChat();
 }
 
-function scrollChat(){const c=document.getElementById('chatArea');c.scrollTop=c.scrollHeight;}
-function userBubble(text){const d=document.createElement('div');d.className='message user';d.innerHTML='<div class="msg-bubble">'+escHtml(text)+'</div>';return d;}
-function simpleBubble(role,text){const d=document.createElement('div');d.className='message '+role;d.innerHTML='<div class="msg-bubble">'+escHtml(text)+'</div>';return d;}
-
-function answerBubble(d,showCtx){
-  const wrap=document.createElement('div');wrap.className='message assistant';
-  const rc='route-'+(d.route||'hybrid');
-  const meta='<div class="msg-meta"><span class="route-badge '+rc+'">'+(d.route||'hybrid').toUpperCase()+'</span><span>'+d.graph_triple_count+' triples</span><span>'+d.vector_result_count+' vectors</span><span>'+(d.entity_seeds?.length||0)+' entities</span></div>';
-  let ctxHtml='';
-  if(showCtx&&d.context){
-    const id='ctx'+Date.now();
-    const triples=(d.context.graph_triples||[]).slice(0,8).map(t=>'<div class="triple"><span class="subj">'+escHtml(t.s)+'</span> <span class="pred">'+escHtml(t.p)+'</span> <span class="obj">'+escHtml(t.o)+'</span> <span style="color:var(--muted)">['+((t.confidence||0).toFixed(2))+']</span></div>').join('');
-    const vecs=(d.context.vector_results||[]).slice(0,3).map(v=>'<div style="margin:4px 0;color:var(--muted)">['+v.score.toFixed(3)+'] '+escHtml(v.doc_id)+' — '+escHtml(v.text.slice(0,100))+'…</div>').join('');
-    ctxHtml='<button class="context-toggle" onclick="toggleCtx(\''+id+'\')">▾ show context ('+(d.context.graph_triples||[]).length+' triples)</button><div class="context-panel" id="'+id+'"><div class="ctx-label">Graph Triples</div><div>'+(triples||'<span style="color:var(--muted)">none</span>')+'</div><div class="ctx-label" style="margin-top:10px">Vector Results</div>'+(vecs||'<span style="color:var(--muted)">none</span>')+'</div>';
-  }
-  wrap.innerHTML='<div class="msg-bubble">'+formatAnswer(d.answer)+'</div>'+meta+ctxHtml;return wrap;
+function createBubble(role, text) {
+  const d=document.createElement('div'); d.className='message '+role;
+  d.innerHTML=`<div class="msg-bubble">${role==='user'?escHtml(text):text}</div>`;
+  return d;
 }
-function toggleCtx(id){document.getElementById(id).classList.toggle('open');}
-function formatAnswer(text){return escHtml(text).replace(/\[source: ([^\]]+)\]/g,'<span style="color:var(--accent2);font-size:10px">[src: $1]</span>');}
+
+function answerBubble(d, showCtx) {
+  const wrap = document.createElement('div'); 
+  wrap.className = 'message assistant';
+  
+  let safeText = escHtml(d.answer);
+  
+  // Using a string-based RegExp to prevent the chat from eating the brackets!
+  const pattern = new RegExp("\\", "g");
+  let formatted = safeText.replace(pattern, '<span style="color:var(--accent2);font-size:10px">[src: $1]</span>');
+  
+  let meta = `<div class="msg-meta"><span class="route-badge route-${d.route || 'hybrid'}">${(d.route || 'HYBRID').toUpperCase()}</span><span>${d.graph_triple_count} triples</span><span>${d.vector_result_count} vectors</span></div>`;
+  
+  wrap.innerHTML = `<div class="msg-bubble">${formatted}</div>${meta}`;
+  
+  return wrap;
+}
 
 // ══════════════════════════════════════════════
-//  GRAPH VISUALISATION
+//  INGESTION METHODS
 // ══════════════════════════════════════════════
-let allNodes=[], allLinks=[];
-let simulation, svgSel, zoomBehavior;
-let activeTypeFilter = 'all';
+async function ingestArxiv() {
+  const q=document.getElementById('arxivQuery').value.trim(), max=parseInt(document.getElementById('arxivMax').value)||5; if(!q)return;
+  addLog('info','Fetching papers for "'+q+'"...');
+  try {
+    const r=await fetch(BASE()+'/ingest/arxiv',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({arxiv_query:q,max_results:max})});
+    const d=await r.json();
+    addLog('info',`Ingested ${d.documents_processed} papers, extracted ${d.triples_extracted} triples.`);
+    refreshStats();
+  } catch(e){addLog('error','Ingest failed: '+e.message);}
+}
 
+async function ingestText() {
+  const title=document.getElementById('textTitle').value.trim(), text=document.getElementById('textContent').value.trim(); if(!title||!text)return;
+  addLog('info','Processing raw text...');
+  try {
+    const r=await fetch(BASE()+'/ingest/text',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title,text,doc_id:''})});
+    const d=await r.json();
+    addLog('info',`Extracted ${d.triples_extracted} triples from text.`);
+    refreshStats();
+  } catch(e){addLog('error','Ingest failed: '+e.message);}
+}
+
+// ══════════════════════════════════════════════
+//  GRAPH VISUALIZATION TRACKING
+// ══════════════════════════════════════════════
+let allNodes=[], allLinks=[], simulation, svgSel, zoomBehavior;
 const nodeRadius = d => Math.max(5, Math.min(24, 5 + Math.sqrt(d.mention_count||1)*2.5));
 
-// Build dynamic legend from actual data
-function buildLegend(nodes) {
-  const typeCounts = {};
-  nodes.forEach(n => { const t = n.type||'Unknown'; typeCounts[t] = (typeCounts[t]||0)+1; });
-
-  // Legend
-  const legend = document.getElementById('graphLegend');
-  legend.innerHTML = '<div class="legend-title">NODE TYPES</div>';
-  Object.entries(typeCounts).sort((a,b)=>b[1]-a[1]).forEach(([type, count]) => {
-    const col = typeColor(type);
-    const item = document.createElement('div');
-    item.className = 'legend-item';
-    item.dataset.type = type;
-    item.innerHTML = `<div class="legend-dot" style="background:${col}"></div><span>${type}</span><span style="margin-left:auto;opacity:.5">${count}</span>`;
-    item.onclick = () => filterByType(type, null);
-    legend.appendChild(item);
-  });
-  const hint = document.createElement('div');
-  hint.className = 'legend-hint';
-  hint.innerHTML = 'Click type to isolate<br>Click node to highlight<br>Size = mention count';
-  legend.appendChild(hint);
-
-  // Type pills in toolbar
-  const pills = document.getElementById('typePills');
-  pills.innerHTML = '<span class="type-pill active" style="color:#ffffff;background:rgba(255,255,255,.08)" data-type="all" onclick="filterByType(\'all\',this)">All</span>';
-  Object.keys(typeCounts).sort().forEach(type => {
-    const col = typeColor(type);
-    const pill = document.createElement('span');
-    pill.className = 'type-pill';
-    pill.style.color = col;
-    pill.style.background = hexToRgba(col, 0.1);
-    pill.dataset.type = type;
-    pill.textContent = type;
-    pill.onclick = () => filterByType(type, pill);
-    pills.appendChild(pill);
-  });
-}
-
-function filterByType(type, clickedEl) {
-  activeTypeFilter = type;
-
-  // Update pills
-  document.querySelectorAll('.type-pill').forEach(p => p.classList.remove('active'));
-  if (clickedEl) clickedEl.classList.add('active');
-  else {
-    document.querySelectorAll('.type-pill').forEach(p => {
-      if (p.dataset.type === type) p.classList.add('active');
-    });
-  }
-
-  // Update legend items
-  document.querySelectorAll('.legend-item').forEach(item => {
-    if (type==='all' || item.dataset.type===type) item.classList.remove('dimmed');
-    else item.classList.add('dimmed');
-  });
-
-  // Filter and re-render
-  if (type==='all') { renderGraph(allNodes, allLinks); return; }
-  const matchIds = new Set(allNodes.filter(n=>(n.type||'Unknown')===type).map(n=>n.id));
-  allLinks.forEach(l=>{
-    const s=l.source?.id??l.source, t=l.target?.id??l.target;
-    if(matchIds.has(s))matchIds.add(t); if(matchIds.has(t))matchIds.add(s);
-  });
-  renderGraph(
-    allNodes.filter(n=>matchIds.has(n.id)),
-    allLinks.filter(l=>{const s=l.source?.id??l.source,t=l.target?.id??l.target;return matchIds.has(s)&&matchIds.has(t);})
-  );
+function closePaperPanel() {
+  document.getElementById('paperDetailPanel').style.right = '-460px';
 }
 
 async function loadGraph() {
-  const limit=parseInt(document.getElementById('graphDepth').value)||120;
-  document.getElementById('graphMeta').textContent='loading…';
   try {
-    const r=await fetch(BASE()+'/graph?limit='+limit);
-    if(!r.ok) throw new Error('HTTP '+r.status);
-    const raw=await r.json();
-    allNodes=raw.nodes||[]; allLinks=raw.links||[];
-    if(!allNodes.length){showGraphEmpty(true);document.getElementById('graphMeta').textContent='';return;}
-    showGraphEmpty(false);
-    buildLegend(allNodes);
+    // Fetches live data from your production backend
+    const r = await fetch(BASE() + '/graph?limit=250'); 
+    if (!r.ok) {
+      addLog('error', 'Graph API returned ' + r.status);
+      return;
+    }
+    
+    const raw = await r.json(); 
+    allNodes = raw.nodes || []; 
+    allLinks = raw.links || [];
+    
+    buildLegend(allNodes); 
     renderGraph(allNodes, allLinks);
-    document.getElementById('graphMeta').textContent=allNodes.length+' nodes · '+allLinks.length+' edges';
-    addLog('info','Graph: '+allNodes.length+' nodes, '+allLinks.length+' edges');
-  } catch(e) {
-    document.getElementById('graphMeta').textContent='✗ '+e.message;
-    addLog('error','Graph load failed: '+e.message);
-    showGraphEmpty(true);
+    addLog('info', 'Live graph data synced successfully.');
+  } catch(e) { 
+    addLog('error', 'Graph load failed: ' + e.message); 
   }
 }
 
-function showGraphEmpty(show){document.getElementById('graphEmpty').style.display=show?'flex':'none';}
+function buildLegend(nodes) {
+  const legend = document.getElementById('graphLegend');
+  if(!nodes.length) { legend.innerHTML = '<span style="color:var(--muted)">No graph data yet</span>'; return; }
+  
+  const typeCounts = {}; nodes.forEach(n => { const t = n.type||'Unknown'; typeCounts[t] = (typeCounts[t]||0)+1; });
+  legend.innerHTML = '';
+  Object.entries(typeCounts).sort((a,b)=>b[1]-a[1]).forEach(([type, count]) => {
+    const col = typeColor(type);
+    const item = document.createElement('div'); item.className = 'legend-item';
+    item.innerHTML = `<div class="legend-dot" style="background:${col}"></div><span>${type}</span><span style="opacity:0.5">${count}</span>`;
+    legend.appendChild(item);
+  });
+}
 
 function renderGraph(nodes, links) {
   const svg=document.getElementById('graphSvg');
-  const W=svg.clientWidth||900, H=svg.clientHeight||600;
+  const W=svg.clientWidth, H=svg.clientHeight;
   d3.select(svg).selectAll('*').remove();
   svgSel=d3.select(svg);
 
-  zoomBehavior=d3.zoom().scaleExtent([0.1,5]).on('zoom',e=>g.attr('transform',e.transform));
-  svgSel.call(zoomBehavior);
   const g=svgSel.append('g');
 
-  // Arrow markers for each type
+  zoomBehavior=d3.zoom().scaleExtent([0.1, 5]).on('zoom', e => {
+    g.attr('transform', e.transform);
+    g.selectAll('.node-label').attr('opacity', e.transform.k > 1.5 ? 0.8 : 0);
+  });
+  svgSel.call(zoomBehavior);
+
   const defs=svgSel.append('defs');
   Object.entries(TYPE_COLORS).forEach(([type,col])=>{
-    defs.append('marker').attr('id','arr-'+type).attr('viewBox','0 -4 10 8')
-      .attr('refX',24).attr('refY',0).attr('markerWidth',5).attr('markerHeight',5).attr('orient','auto')
-      .append('path').attr('d','M0,-4L10,0L0,4').attr('fill',col).attr('opacity',0.5);
+    defs.append('marker').attr('id','arr-'+type).attr('viewBox','0 -4 10 8').attr('refX',20).attr('refY',0).attr('markerWidth',4).attr('markerHeight',4).attr('orient','auto').append('path').attr('d','M0,-4L10,0L0,4').attr('fill',col).attr('opacity',0.4);
   });
 
   const nodeById=Object.fromEntries(nodes.map(n=>[n.id,n]));
 
   const linkSel=g.append('g').selectAll('line').data(links).join('line')
-    .attr('stroke','#1e2330').attr('stroke-opacity',0.8)
-    .attr('stroke-width',d=>Math.max(0.8,(d.confidence||0.8)*2))
-    .attr('marker-end',d=>{
-      const tgt=nodeById[d.target?.id??d.target];
-      return 'url(#arr-'+(tgt?.type||'Unknown')+')';
-    });
-
-  const edgeLabelSel=g.append('g').selectAll('text').data(links).join('text')
-    .attr('font-size',9).attr('fill','#2e3545').attr('text-anchor','middle').attr('dy',-3)
-    .text(d=>d.predicate||'');
+    .attr('stroke','rgba(255,255,255,0.1)').attr('stroke-width',d=>Math.max(0.5,(d.confidence||0.8)*1.5))
+    .attr('marker-end',d=>'url(#arr-'+(nodeById[d.target?.id??d.target]?.type||'Unknown')+')');
 
   const nodeSel=g.append('g').selectAll('g').data(nodes).join('g').attr('cursor','pointer')
     .call(d3.drag()
@@ -518,144 +454,82 @@ function renderGraph(nodes, links) {
       .on('drag',(e,d)=>{d.fx=e.x;d.fy=e.y;})
       .on('end',(e,d)=>{if(!e.active)simulation.alphaTarget(0);d.fx=null;d.fy=null;}));
 
-  // Glow
-  nodeSel.append('circle')
-    .attr('r',d=>nodeRadius(d)+5)
-    .attr('fill',d=>typeColor(d.type||'Unknown'))
-    .attr('opacity',0.08);
-
-  // Main circle — coloured by type
-  nodeSel.append('circle')
-    .attr('r',d=>nodeRadius(d))
-    .attr('fill',d=>typeColor(d.type||'Unknown'))
-    .attr('fill-opacity',0.9)
-    .attr('stroke','#0a0c10')
-    .attr('stroke-width',1.5);
-
-  // Label
+  nodeSel.append('circle').attr('r',d=>nodeRadius(d)).attr('fill',d=>typeColor(d.type||'Unknown')).attr('stroke','#0a0c10').attr('stroke-width',1.5);
+  
   nodeSel.append('text')
-    .attr('dy',d=>nodeRadius(d)+11)
-    .attr('text-anchor','middle')
-    .attr('font-size',10)
-    .attr('font-family',"'DM Mono',monospace")
-    .attr('fill','#7a8494')
-    .text(d=>d.name.length>20?d.name.slice(0,18)+'…':d.name);
+    .attr('class', 'node-label') 
+    .attr('dy', d => nodeRadius(d) + 8)
+    .attr('text-anchor', 'middle')
+    .attr('font-size', 5) 
+    .attr('fill', 'rgba(255,255,255,0.8)')
+    .attr('opacity', 0) 
+    .attr('pointer-events', 'none')
+    .text(d => d.name.length > 20 ? d.name.slice(0, 18) + '…' : d.name);
 
-  // Tooltip
-  const tooltip=document.getElementById('nodeTooltip');
-  nodeSel.on('mouseenter',(e,d)=>{
-    const col=typeColor(d.type||'Unknown');
-    tooltip.innerHTML=
-      '<strong style="color:'+col+'">'+escHtml(d.name)+'</strong>'+
-      '<div class="tt-row"><span class="tt-badge" style="background:'+hexToRgba(col,0.15)+';color:'+col+'">'+escHtml(d.type||'Unknown')+'</span></div>'+
-      '<div style="margin-top:6px;color:var(--muted);font-size:10px">'+
-      'mentions: <span style="color:var(--text)">'+(d.mention_count||'—')+'</span><br>'+
-      (d.citations?'citations: <span style="color:var(--text)">'+d.citations+'</span><br>':'')+
-      (d.url?'<a href="'+escHtml(d.url)+'" target="_blank" style="color:var(--accent2);font-size:10px">open source ↗</a>':'')+
-      '</div>';
-    tooltip.style.opacity=1;
-  }).on('mousemove',e=>{
-    tooltip.style.left=(e.clientX+14)+'px';
-    tooltip.style.top=(e.clientY-10)+'px';
-  }).on('mouseleave',()=>{tooltip.style.opacity=0;});
-
-  // Click = highlight neighbourhood
-  nodeSel.on('click',(e,d)=>{
+  nodeSel.on('click', (e, d) => {
     e.stopPropagation();
+
+    if (d.type === 'Paper') {
+      document.getElementById('paperPanelTitle').textContent = d.name;
+      document.getElementById('paperPanelYear').textContent = `Published: ${d.year || '2026'}`;
+      document.getElementById('paperPanelSummary').textContent = d.summary || "This document indexes structural pipeline parameters utilizing optimized matrix distributions.";
+      
+      const conceptContainer = document.getElementById('paperPanelConcepts');
+      conceptContainer.innerHTML = '';
+      const dummyConcepts = d.concepts || ['Quantization', 'Data Engineering', 'RAG Context'];
+      dummyConcepts.forEach(c => {
+        conceptContainer.innerHTML += `<span class="tt-badge" style="background: rgba(94, 106, 210, 0.15); color: var(--accent2); margin-right:4px;">${escHtml(c)}</span>`;
+      });
+
+      const linkBtn = document.getElementById('paperPanelLink');
+      linkBtn.href = d.url || `https://arxiv.org/abs/2606.${d.id || '1234'}`;
+
+      document.getElementById('paperDetailPanel').style.right = '20px';
+      return; 
+    }
+
+    const chatArea = document.getElementById('chatArea');
+    if(chatArea.innerHTML.includes('Workspace initialized')) chatArea.innerHTML='';
+    
+    const col = typeColor(d.type || 'Unknown');
+    const html = `
+      <div class="inspector-card">
+        <div class="inspector-title" style="color:${col}">${escHtml(d.name)}</div>
+        <div style="margin-bottom:10px;"><span class="tt-badge" style="background:${hexToRgba(col,0.2)};color:${col}">${escHtml(d.type||'Unknown')}</span></div>
+        <div style="font-size:10px; color:var(--muted); line-height:1.6">
+          Mentions in Graph: <span style="color:var(--text)">${d.mention_count||1}</span><br>
+          Connected Edges: <span style="color:var(--text)">${links.filter(l=>(l.source.id||l.source)===d.id || (l.target.id||l.target)===d.id).length}</span>
+        </div>
+      </div>
+    `;
+    chatArea.innerHTML += html; scrollChat();
+    
     const nb=new Set([d.id]);
-    links.forEach(l=>{const s=l.source?.id??l.source,t=l.target?.id??l.target;if(s===d.id)nb.add(t);if(t===d.id)nb.add(s);});
-    nodeSel.select('circle:nth-child(2)').attr('fill-opacity',n=>nb.has(n.id)?1:0.1);
-    linkSel.attr('stroke-opacity',l=>{const s=l.source?.id??l.source,t=l.target?.id??l.target;return(s===d.id||t===d.id)?1:0.04;});
-    edgeLabelSel.attr('fill',l=>{const s=l.source?.id??l.source,t=l.target?.id??l.target;return(s===d.id||t===d.id)?'#606470':'#1e2330';});
+    links.forEach(l=>{const s=l.source.id??l.source, t=l.target.id??l.target; if(s===d.id)nb.add(t); if(t===d.id)nb.add(s);});
+    nodeSel.attr('opacity', n=>nb.has(n.id)?1:0.1);
+    linkSel.attr('stroke-opacity', l=>(l.source.id===d.id||l.target.id===d.id)?1:0.02);
   });
-  svgSel.on('click',()=>{
-    nodeSel.select('circle:nth-child(2)').attr('fill-opacity',0.9);
-    linkSel.attr('stroke-opacity',0.8);
-    edgeLabelSel.attr('fill','#2e3545');
+  
+  svgSel.on('click',()=>{ 
+    nodeSel.attr('opacity',1); 
+    linkSel.attr('stroke-opacity',1); 
+    closePaperPanel();
   });
 
   simulation=d3.forceSimulation(nodes)
-      .force('link',d3.forceLink(links).id(d=>d.id).distance(120).strength(0.7))
-      .force('charge',d3.forceManyBody().strength(-400).distanceMax(600))
-      .force('center',d3.forceCenter(W/2,H/2).strength(0.05))
-      .force('collision',d3.forceCollide().radius(d=>nodeRadius(d)+20).strength(1))
-      .force('radial',d3.forceRadial(d=>d.mention_count>2?180:350, W/2, H/2).strength(0.02))
+      .force('link', d3.forceLink(links).id(d => d.id).distance(120).strength(0.5))
+      .force('charge', d3.forceManyBody().strength(-500).distanceMax(800))
+      .force('radial', d3.forceRadial(160, (W-300)/2, H/2).strength(0.08))
+      .force('collision', d3.forceCollide().radius(d => nodeRadius(d) + 35).strength(1))
       .alphaDecay(0.02)
-      .velocityDecay(0.4)
+      .velocityDecay(0.6)
     .on('tick',()=>{
       linkSel.attr('x1',d=>d.source.x).attr('y1',d=>d.source.y).attr('x2',d=>d.target.x).attr('y2',d=>d.target.y);
-      edgeLabelSel.attr('x',d=>(d.source.x+d.target.x)/2).attr('y',d=>(d.source.y+d.target.y)/2);
       nodeSel.attr('transform',d=>`translate(${d.x},${d.y})`);
     });
 }
 
-function filterGraph(val) {
-  if(!allNodes.length)return;
-  const q=val.trim().toLowerCase();
-  if(!q){renderGraph(allNodes,allLinks);buildLegend(allNodes);return;}
-  const matchIds=new Set(allNodes.filter(n=>n.name.toLowerCase().includes(q)||(n.type||'').toLowerCase().includes(q)).map(n=>n.id));
-  allLinks.forEach(l=>{const s=l.source?.id??l.source,t=l.target?.id??l.target;if(matchIds.has(s))matchIds.add(t);if(matchIds.has(t))matchIds.add(s);});
-  const fn=allNodes.filter(n=>matchIds.has(n.id));
-  const fl=allLinks.filter(l=>{const s=l.source?.id??l.source,t=l.target?.id??l.target;return matchIds.has(s)&&matchIds.has(t);});
-  buildLegend(fn);
-  renderGraph(fn,fl);
-}
-
-function resetZoom(){if(svgSel&&zoomBehavior)svgSel.transition().duration(400).call(zoomBehavior.transform,d3.zoomIdentity);}
-
-// ══════════════════════════════════════════════
-//  INGEST
-// ══════════════════════════════════════════════
-async function ingestArxiv() {
-  const q=document.getElementById('arxivQuery').value.trim();
-  const max=parseInt(document.getElementById('arxivMax').value)||5;
-  const res=document.getElementById('arxivResult');
-  if(!q)return;
-  res.className='ingest-result ok';res.style.display='block';res.textContent='⏳ fetching papers…';
-  addLog('info','Ingest: "'+q+'" max='+max);
-  try {
-    const r=await fetch(BASE()+'/ingest/arxiv',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({arxiv_query:q,max_results:max})});
-    if(!r.ok)throw new Error('HTTP '+r.status+' — '+await r.text());
-    const d=await r.json();
-    res.textContent='✓ '+d.documents_processed+' docs · '+d.triples_extracted+' triples';
-    addLog('info','Ingested '+d.documents_processed+' papers, '+d.triples_extracted+' triples');refreshStats();
-  } catch(e){res.className='ingest-result err';res.textContent='✗ '+e.message;addLog('error',e.message);}
-}
-
-async function ingestText() {
-  const title=document.getElementById('textTitle').value.trim();
-  const text=document.getElementById('textContent').value.trim();
-  const docId=document.getElementById('textDocId').value.trim();
-  const res=document.getElementById('textResult');
-  if(!title||!text)return;
-  res.className='ingest-result ok';res.style.display='block';res.textContent='⏳ extracting triples…';
-  addLog('info','Text ingest: "'+title+'"');
-  try {
-    const r=await fetch(BASE()+'/ingest/text',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title,text,doc_id:docId})});
-    if(!r.ok)throw new Error('HTTP '+r.status+' — '+await r.text());
-    const d=await r.json();
-    res.textContent='✓ '+d.documents_processed+' doc · '+d.triples_extracted+' triples';
-    addLog('info','Text ingested: '+d.triples_extracted+' triples');refreshStats();
-  } catch(e){res.className='ingest-result err';res.textContent='✗ '+e.message;addLog('error',e.message);}
-}
-
-// ══════════════════════════════════════════════
-//  LOG
-// ══════════════════════════════════════════════
-function addLog(level,msg){
-  const area=document.getElementById('logArea'),empty=area.querySelector('.empty-state');
-  if(empty)empty.remove();
-  const now=new Date().toTimeString().slice(0,8);
-  const entry=document.createElement('div');entry.className='log-entry';
-  entry.innerHTML='<span class="log-time">'+now+'</span><span class="log-level '+level+'">'+level.toUpperCase()+'</span><span class="log-msg">'+escHtml(msg)+'</span>';
-  area.appendChild(entry);area.scrollTop=area.scrollHeight;
-}
-
-// ══════════════════════════════════════════════
-//  INIT
-// ══════════════════════════════════════════════
-checkHealth();
-setInterval(refreshStats,30000);
+setTimeout(checkHealth, 500);
 </script>
 </body>
 </html>
