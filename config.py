@@ -11,7 +11,7 @@ load_dotenv()
 class Config:
     # Gemini
     GEMINI_API_KEY: str = os.environ["GEMINI_API_KEY"]
-    LLM_MODEL: str = "gemini-2.5-flash"                 # free-tier friendly
+    LLM_MODEL: str = "gemini-1.5-flash"                 # free-tier friendly
 
     # Neo4j
     NEO4J_URI: str = os.getenv("NEO4J_URI", "bolt://localhost:7687")
