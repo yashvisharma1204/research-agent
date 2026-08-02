@@ -199,6 +199,24 @@ async def stats():
         vector_index_size=graph_stats.get("vectors", 0),  # <--- NEO4J DEPENDENCY
     )
 
+@app.get("/api/ingestion/history")
+async def get_ingestion_history():
+    """Retrieves a history of ingested papers/documents from the graph."""
+    cypher = """
+    MATCH (e:Entity)
+    WHERE e.text IS NOT NULL
+    RETURN DISTINCT e.name AS title, e.type AS type, size(e.text) as text_length
+    ORDER BY title DESC
+    LIMIT 20
+    """
+    try:
+        with get_driver().session() as session:
+            records = session.run(cypher).data()
+        return {"history": records}
+    except Exception as exc:
+        logger.error("Failed to fetch ingestion history: %s", exc)
+        return {"history": []}
+
 
 # ── CORS middleware (fixes browser "Failed to fetch") ─────────────────────────
 from fastapi.middleware.cors import CORSMiddleware
