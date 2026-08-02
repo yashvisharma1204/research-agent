@@ -3,629 +3,996 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Research Agent · Infinite Canvas</title>
+<title>Research Workbench</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=DM+Mono:ital,wght@0,300;0,400;0,500;1,300&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
 <style>
-  :root { 
-    --bg: #0a0c10;
-    --surface: #111318;
-    --surface2: #181c23;
-    --border: #252932;
-    --accent: #ffffff;
-    --accent2: #64c0e2;
-    --accent3: #5c97f0;
-    --text: #e8eaf0;
-    --muted: #606470;
-    --danger: #f05c6a;
-    --warn: #f0a05c;
-    --radius: 10px; 
+  :root {
+    /* Hushed Light Palette */
+    --bg-page: #fafafa;
+    --bento-bg: #ffffff;
+    --bento-subtle: #f4f4f5;
+    --border: #e4e4e7;
+    --border-strong: #d4d4d8;
+    
+    --text-primary: #18181b;
+    --text-secondary: #52525b;
+    --text-muted: #a1a1aa;
+    
+    --primary-accent: #6366f1;
+
+    /* Bento Styling Tokens */
+    --radius-bento: 20px;
+    --radius-card: 12px;
+    --radius-pill: 9999px;
+    --shadow-subtle: 0 1px 3px rgba(0,0,0,0.02);
   }
-  *,*::before,*::after { box-sizing:border-box; margin:0; padding:0; }
-  body { font-family:'DM Mono',monospace; background:var(--bg); color:var(--text); overflow:hidden; width:100vw; height:100vh; }
-  body::before { content:''; position:fixed; inset:0; background-image:linear-gradient(rgba(255,255,255,.015) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.015) 1px,transparent 1px); background-size:40px 40px; pointer-events:none; z-index:0; }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  ::-webkit-scrollbar { width: 5px; height: 5px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #d4d4d8; border-radius: var(--radius-pill); }
+
+  body { 
+    font-family: 'Plus Jakarta Sans', sans-serif; 
+    background: var(--bg-page); 
+    color: var(--text-primary); 
+    overflow: hidden; 
+    width: 100vw; 
+    height: 100vh; 
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Bento Layout Container */
+  .workbench-grid {
+    display: grid;
+    grid-template-columns: 420px 1fr;
+    gap: 16px;
+    padding: 16px;
+    width: 100vw;
+    height: 100vh;
+  }
+
+  /* Bento Card Surface */
+  .bento-card {
+    background: var(--bento-bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-bento);
+    box-shadow: var(--shadow-subtle);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    position: relative;
+  }
+
+  /* LEFT SIDEBAR BENTO STACK */
+  .left-stack {
+    display: grid;
+    grid-template-rows: auto auto 1fr;
+    gap: 12px;
+    height: 100%;
+    overflow: hidden;
+  }
+
+  .bento-header {
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: #fafafa;
+  }
+  .bento-title {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+  }
+
+  .pill-badge {
+    padding: 3px 8px;
+    border-radius: var(--radius-pill);
+    font-size: 10px;
+    font-weight: 600;
+    background: var(--bento-subtle);
+    color: var(--text-secondary);
+    transition: all 0.2s ease;
+  }
+
+  /* Stats Grid */
+  .stats-bento-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 8px;
+    padding: 12px;
+  }
+  .stat-tile {
+    background: var(--bento-subtle);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-card);
+    padding: 10px 12px;
+  }
+  .stat-val { font-size: 18px; font-weight: 700; color: var(--text-primary); }
+  .stat-lbl { font-size: 9.5px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; margin-top: 2px; }
+
+  /* Tab Navigation */
+  .bento-tabs {
+    display: flex;
+    padding: 4px;
+    background: var(--bento-subtle);
+    margin: 12px 12px 0 12px;
+    border-radius: var(--radius-pill);
+    gap: 4px;
+  }
+  .tab-btn {
+    flex: 1;
+    padding: 6px 0;
+    border: none;
+    background: transparent;
+    border-radius: var(--radius-pill);
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+  .tab-btn.active {
+    background: #ffffff;
+    color: var(--text-primary);
+    box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+  }
+
+  .tab-content-container {
+    max-height: 220px;
+    overflow-y: auto;
+  }
+
+  .form-group { padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+  .form-group label { font-size: 10px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; }
+  input[type="text"], input[type="number"], textarea {
+    width: 100%;
+    background: var(--bento-subtle);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-card);
+    padding: 8px 12px;
+    font-family: 'Plus Jakarta Sans', sans-serif;
+    font-size: 11.5px;
+    color: var(--text-primary);
+    outline: none;
+  }
+  input[type="text"]:focus, input[type="number"]:focus, textarea:focus {
+    background: #ffffff;
+    border-color: var(--border-strong);
+  }
+
+  .btn-bento {
+    background: var(--text-primary);
+    color: #ffffff;
+    border: none;
+    padding: 9px 14px;
+    border-radius: var(--radius-card);
+    font-weight: 600;
+    font-size: 11px;
+    cursor: pointer;
+    transition: opacity 0.15s ease;
+  }
+  .btn-bento:hover { opacity: 0.9; }
+  .btn-bento:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  /* Sub-tab navigation for Ingest */
+  .sub-tabs { display: flex; gap: 8px; margin-bottom: 6px; }
+  .sub-tab-btn {
+    font-size: 10px;
+    font-weight: 600;
+    padding: 3px 8px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--bento-subtle);
+    color: var(--text-secondary);
+    cursor: pointer;
+  }
+  .sub-tab-btn.active { background: var(--text-primary); color: #fff; border-color: var(--text-primary); }
+
+  /* Chat Area */
+  .chat-bento { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+  .chat-stream { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+  .message { max-width: 90%; }
+  .message.user { align-self: flex-end; }
+  .message.assistant { align-self: flex-start; }
+  .msg-bubble {
+    padding: 10px 14px;
+    border-radius: 12px;
+    font-size: 12px;
+    line-height: 1.5;
+  }
+  .message.user .msg-bubble { background: var(--text-primary); color: #ffffff; }
+  .message.assistant .msg-bubble { background: var(--bento-subtle); color: var(--text-primary); border: 1px solid var(--border); }
+
+  /* Routing Strategy Badges */
+  .route-tag {
+    display: inline-block;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 9px;
+    font-weight: 700;
+    text-transform: uppercase;
+    margin-bottom: 6px;
+    letter-spacing: 0.03em;
+  }
+  .route-hybrid { background: #e0e7ff; color: #3730a3; border: 1px solid #c7d2fe; }
+  .route-cypher { background: #fef3c7; color: #92400e; border: 1px solid #fde68a; }
+  .route-vector { background: #d1fae5; color: #065f46; border: 1px solid #a7f3d0; }
+
+  /* RIGHT CANVAS AREA */
+  .canvas-bento-container {
+    height: 100%;
+    position: relative;
+    background: #ffffff;
+    border-radius: var(--radius-bento);
+    border: 1px solid var(--border);
+    overflow: hidden;
+    box-shadow: var(--shadow-subtle);
+  }
+
+  .canvas-bg-grid {
+    position: absolute;
+    inset: 0;
+    background-image: radial-gradient(#e4e4e7 1px, transparent 1px);
+    background-size: 20px 20px;
+    pointer-events: none;
+  }
+
+  #graphSvg { width: 100%; height: 100%; position: relative; cursor: grab; }
+  #graphSvg:active { cursor: grabbing; }
+
+  /* Floating Legend & Category Filter Bar */
+  .legend-bento {
+    position: absolute;
+    bottom: 16px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(255, 255, 255, 0.95);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-pill);
+    padding: 6px 14px;
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    z-index: 10;
+    max-width: 90%;
+    overflow-x: auto;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+  }
   
-  /* The Infinite Canvas */
-  #graphSvg { position:fixed; top:0; left:0; width:100vw; height:100vh; z-index:1; cursor:grab; }
-  #graphSvg:active { cursor:grabbing; }
+  .legend-chip {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 10.5px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    padding: 4px 10px;
+    border-radius: var(--radius-pill);
+    border: 1px solid var(--border);
+    background: var(--bento-subtle);
+    cursor: pointer;
+    user-select: none;
+    transition: all 0.2s ease;
+  }
+  .legend-chip.active {
+    background: #ffffff;
+    border-color: var(--text-primary);
+    color: var(--text-primary);
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+  }
+  .legend-chip.dimmed {
+    opacity: 0.4;
+    background: transparent;
+    border-style: dashed;
+  }
+  .legend-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
 
-  /* Floating UI Layer */
-  .ui-layer { position:fixed; inset:0; z-index:10; pointer-events:none; display:flex; justify-content:space-between; padding:20px; gap:20px; }
-  .panel { pointer-events:auto; background:var(--surface); backdrop-filter:blur(16px); -webkit-backdrop-filter:blur(16px); border:1px solid var(--border); border-radius:var(--radius); display:flex; flex-direction:column; overflow:hidden; box-shadow:0 8px 32px rgba(0,0,0,0.4); }
-  
-  /* Left Sidebar (Tools) */
-  .left-panel { width:320px; height:100%; display:flex; flex-direction:column; }
-  header { padding:20px; border-bottom:1px solid var(--border); }
-  .logo { font-family:'Syne',sans-serif; font-weight:800; font-size:16px; letter-spacing:.05em; color:var(--accent); }
-  .logo span { color:var(--muted); font-weight:400; }
-  .header-status { margin-top:8px; display:flex; align-items:center; gap:12px; font-size:11px; color:var(--muted); }
-  .status-dot { display:inline-block; width:7px; height:7px; border-radius:50%; background:var(--muted); transition:background .3s; }
-  .status-dot.online { background:var(--accent); box-shadow:0 0 8px var(--accent); animation:pulse 2s infinite; }
-  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.5} }
+  /* Inspector Drawer */
+  .inspector-drawer {
+    position: absolute;
+    top: 16px;
+    right: -380px;
+    width: 340px;
+    height: calc(100% - 32px);
+    background: rgba(255, 255, 255, 0.98);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-bento);
+    z-index: 20;
+    transition: right 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+    display: flex;
+    flex-direction: column;
+    box-shadow: -4px 0 16px rgba(0,0,0,0.03);
+  }
+  .inspector-drawer.open { right: 16px; }
 
-  .tab-nav { display:flex; border-bottom:1px solid var(--border); }
-  .tab-btn { flex:1; padding:12px 0; background:transparent; border:none; color:var(--muted); font-family:inherit; font-size:11px; cursor:pointer; text-transform:uppercase; letter-spacing:.1em; transition:all .2s; }
-  .tab-btn:hover { color:var(--text); background:rgba(255,255,255,0.02); }
-  .tab-btn.active { color:var(--accent); box-shadow:inset 0 -2px 0 var(--accent); background:rgba(255,255,255,0.04); }
+  .pastel-badge {
+    display: inline-block;
+    padding: 3px 8px;
+    border-radius: var(--radius-pill);
+    font-size: 9.5px;
+    font-weight: 600;
+    text-transform: uppercase;
+  }
 
-  .tab-content { display:none; flex:1; overflow-y:auto; padding:20px; flex-direction:column; gap:20px; }
-  .tab-content.active { display:flex; }
+  .node-label {
+    font-family: 'Plus Jakarta Sans', sans-serif;
+    font-weight: 600;
+    font-size: 10px;
+    fill: #27272a;
+    pointer-events: none;
+    text-shadow: 0 1px 2px rgba(255,255,255,0.9);
+  }
 
-  /* Right Sidebar (Chat / Inspector) */
-  .right-panel { width:420px; height:100%; display:flex; flex-direction:column; }
-  .chat-area { flex:1; overflow-y:auto; padding:20px; display:flex; flex-direction:column; gap:16px; scroll-behavior:smooth; }
-  .input-bar { padding:16px 20px; border-top:1px solid var(--border); background:rgba(10,12,16,0.6); display:flex; flex-direction:column; gap:10px; }
-  .input-wrap { background:var(--surface2); border:1px solid var(--border); border-radius:8px; display:flex; align-items:center; transition:border-color .2s; }
-  .input-wrap:focus-within { border-color:rgba(255,255,255,.35); }
-  #queryInput { flex:1; background:none; border:none; outline:none; padding:12px 16px; font-family:inherit; font-size:12px; color:var(--text); resize:none; min-height:44px; max-height:120px; }
-  
-  /* Forms & Buttons */
-  .form-group label { display:block; font-size:10px; color:var(--muted); margin-bottom:6px; letter-spacing:.06em; text-transform:uppercase; }
-  input[type=text], input[type=number], textarea { width:100%; background:var(--surface2); border:1px solid var(--border); border-radius:6px; padding:10px 12px; font-family:inherit; font-size:11px; color:var(--text); outline:none; }
-  .btn-primary { width:100%; padding:10px 18px; background:var(--accent); border:none; border-radius:6px; color:#000; font-family:'Syne',sans-serif; font-weight:700; font-size:12px; cursor:pointer; transition:all .15s; }
-  .btn-primary:hover { background:#d0d4d8; }
-  .btn-secondary { padding:6px 12px; background:transparent; border:1px solid var(--border); border-radius:6px; color:var(--text); font-family:inherit; font-size:10px; cursor:pointer; transition:all .15s; }
-  .btn-secondary:hover { background:rgba(255,255,255,0.1); }
+  .external-link-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 8px;
+    padding: 6px 10px;
+    border-radius: var(--radius-card);
+    background: var(--bento-subtle);
+    border: 1px solid var(--border);
+    color: var(--primary-accent);
+    font-size: 11px;
+    font-weight: 600;
+    text-decoration: none;
+  }
+  .external-link-btn:hover { background: #eef2ff; }
 
-  /* Chat Bubbles */
-  .message { max-width:90%; animation:slideIn .2s ease; }
-  @keyframes slideIn { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
-  .message.user { align-self:flex-end; }
-  .message.assistant { align-self:flex-start; }
-  .msg-bubble { padding:12px 16px; border-radius:8px; font-size:12px; line-height:1.6; }
-  .message.user .msg-bubble { background:rgba(255,255,255,.08); border:1px solid rgba(255,255,255,.15); color:var(--text); }
-  .message.assistant .msg-bubble { background:var(--surface2); border:1px solid var(--border); color:var(--text); }
-  .msg-meta { font-size:9px; color:var(--muted); margin-top:6px; display:flex; gap:8px; flex-wrap:wrap; }
-  .route-badge { padding:2px 6px; border-radius:3px; font-weight:500; text-transform:uppercase; }
-  .route-hybrid { background:rgba(100,192,226,.15); color:var(--accent2); }
-  .route-cypher { background:rgba(255,255,255,.1); color:var(--accent); }
-  .route-vector { background:rgba(92,151,240,.15); color:var(--accent3); }
+  /* History Panel Formatting */
+  .history-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+  }
 
-  /* Graph Legend Floating Bottom Center */
-  .graph-legend { position:absolute; bottom:20px; left:50%; transform:translateX(-50%); background:var(--surface); backdrop-filter:blur(12px); border:1px solid var(--border); border-radius:20px; padding:8px 16px; display:flex; gap:16px; font-size:10px; pointer-events:auto; align-items:center; }
-  .legend-item { display:flex; align-items:center; gap:6px; color:var(--muted); cursor:pointer; transition:color .2s; }
-  .legend-item:hover { color:var(--text); }
-  .legend-dot { width:8px; height:8px; border-radius:50%; }
+  .history-subtitle {
+    font-size: 0.8rem;
+    color: #888;
+  }
 
-  /* Utilities */
-  .stat-grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
-  .stat-item { background:var(--surface2); border-radius:6px; padding:10px; border:1px solid var(--border); }
-  .stat-value { font-family:'Syne',sans-serif; font-size:18px; font-weight:700; color:var(--accent); }
-  .stat-label { font-size:9px; color:var(--muted); margin-top:2px; text-transform:uppercase; }
-  .log-entry { font-size:10px; padding:4px 0; border-bottom:1px solid var(--border); display:flex; gap:10px; }
-  .log-time { color:var(--muted); }
-  
-  /* Node Inspector */
-  .inspector-card { background:rgba(100,192,226,0.05); border:1px solid rgba(100,192,226,0.2); border-radius:8px; padding:16px; margin-bottom:16px; animation:slideIn .2s ease; }
-  .inspector-title { font-family:'Syne',sans-serif; font-weight:700; font-size:14px; color:var(--accent2); margin-bottom:8px; }
-  .tt-badge { display:inline-block; padding:2px 6px; border-radius:4px; font-size:9px; font-weight:600; text-transform:uppercase; }
+  .secondary-btn-sm {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    color: #ccc;
+    padding: 3px 8px;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+
+  .secondary-btn-sm:hover {
+    background: rgba(255, 255, 255, 0.15);
+    color: #fff;
+  }
+
+  /* History List Layout & Scrollbar */
+  .history-list-container {
+    max-height: 180px;
+    overflow-y: auto;
+    padding-right: 4px;
+  }
+
+  .history-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .history-item {
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    padding: 8px 10px;
+    border-radius: 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    transition: background 0.2s ease;
+  }
+
+  .history-item:hover {
+    background: rgba(255, 255, 255, 0.07);
+  }
+
+  .history-title {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: #e0e0e0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .history-meta {
+    font-size: 0.72rem;
+    color: #888;
+  }
+
+  .loading-text, .empty-text, .error-text {
+    font-size: 0.8rem;
+    color: #888;
+    padding: 12px;
+    text-align: center;
+  }
 </style>
 </head>
 <body>
 
-<svg id="graphSvg"></svg>
+<div class="workbench-grid">
 
-<div class="ui-layer">
-  
-  <div class="panel left-panel">
-    <header>
-      <div class="logo">RESEARCH<span>/</span>AGENT</div>
-      <div class="header-status">
-        <span class="status-dot" id="statusDot"></span><span id="statusText">connecting…</span>
-        <button class="btn-secondary" style="margin-left:auto; padding:2px 6px; font-size:9px" onclick="checkHealth()">PING</button>
-      </div>
-      <input type="text" id="apiUrl" value="http://localhost:8000" style="margin-top:10px; height:24px; font-size:9px;">
-    </header>
-
-    <div class="tab-nav">
-      <button class="tab-btn active" onclick="switchTab('stats', this)">Stats</button>
-      <button class="tab-btn" onclick="switchTab('ingest', this)">Ingest</button>
-      <button class="tab-btn" onclick="switchTab('logs', this)">Logs</button>
-    </div>
-
-    <div class="tab-content active" id="tab-stats">
-      <div class="stat-grid">
-        <div class="stat-item"><div class="stat-value" id="statEntities">—</div><div class="stat-label">Entities</div></div>
-        <div class="stat-item"><div class="stat-value" id="statRelations">—</div><div class="stat-label">Relations</div></div>
-        <div class="stat-item"><div class="stat-value" id="statPapers">—</div><div class="stat-label">Papers</div></div>
-        <div class="stat-item"><div class="stat-value" id="statVectors">—</div><div class="stat-label">Vectors</div></div>
-      </div>
-      <div style="margin-top:auto; display:flex; flex-direction:column; gap:8px;">
-        <div style="display:flex; gap:10px;">
-          <button class="btn-secondary" style="flex:1" onclick="refreshStats()">↻ Stats</button>
-          <button class="btn-secondary" style="flex:1" onclick="loadGraph()">⟳ Sync</button>
-        </div>
-        <button class="btn-primary" id="layoutToggleBtn" onclick="toggleLayout()" style="background:var(--accent1); color:#fff;">
-          Layout: Network Cluster
-        </button>
-      </div>
-    </div>
-
-    <div class="tab-content" id="tab-ingest">
-      <div class="form-group">
-        <label>arXiv / Semantic Scholar</label>
-        <input type="text" id="arxivQuery" placeholder="e.g. transformers, RAG" style="margin-bottom:8px">
-        <input type="number" id="arxivMax" value="5" min="1" style="margin-bottom:8px">
-        <button class="btn-primary" onclick="ingestArxiv()">FETCH PAPERS</button>
-      </div>
-      <div style="border-top:1px solid var(--border); margin:10px 0;"></div>
-      <div class="form-group">
-        <label>Raw Text Paste</label>
-        <input type="text" id="textTitle" placeholder="Document Title" style="margin-bottom:8px">
-        <textarea id="textContent" placeholder="Paste abstract or notes..." style="height:80px; margin-bottom:8px"></textarea>
-        <button class="btn-primary" onclick="ingestText()">EXTRACT TRIPLES</button>
-      </div>
-    </div>
-
-    <div class="tab-content" id="tab-logs">
-      <div id="logArea" style="display:flex; flex-direction:column; gap:4px;">
-        <div style="color:var(--muted); font-size:10px; text-align:center; padding:20px;">System logs will stream here...</div>
-      </div>
-    </div>
-  </div>
-
-  <div class="graph-legend" id="graphLegend">
-    <span style="color:var(--muted)">Loading Graph...</span>
-  </div>
-
-  <div class="panel right-panel">
-    <div class="chat-area" id="chatArea">
-      <div style="text-align:center; margin:auto; color:var(--muted); font-size:11px;">
-        <div style="font-size:24px; margin-bottom:10px; opacity:0.5;">◈</div>
-        Workspace initialized.<br>Ask a question or click a node in the graph.
-      </div>
-    </div>
+  <!-- LEFT COLUMN -->
+  <div class="left-stack">
     
-    <div class="input-bar">
-      <div class="input-wrap">
-        <textarea id="queryInput" placeholder="Ask a research question..." onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendQuery()}"></textarea>
+    <!-- Top Bar & API Connection -->
+    <div class="bento-card">
+      <div class="bento-header">
+        <div class="bento-title">RESEARCH WORKBENCH</div>
+        <div class="pill-badge" id="statusBadge">Checking...</div>
       </div>
-      <div style="display:flex; justify-content:space-between; align-items:center;">
-        <label style="display:flex; align-items:center; gap:6px; margin:0; cursor:pointer;">
-          <input type="checkbox" id="includeCtx" style="accent-color:var(--accent)"> Include Context
-        </label>
-        <button class="btn-primary" id="sendBtn" style="width:auto; padding:8px 24px;" onclick="sendQuery()">SEND</button>
+      <div style="padding:10px 12px; display:flex; gap:6px;">
+        <input type="text" id="apiUrl" value="https://research-agent-s7ye.onrender.com" style="font-family:'JetBrains Mono',monospace; font-size:10.5px;">
+        <button class="btn-bento" style="padding:0 12px;" onclick="checkHealth()">Ping</button>
+      </div>
+    </div>
+
+    <!-- Overview & Ingestion Bento -->
+    <div class="bento-card">
+      <div class="bento-tabs">
+        <button class="tab-btn active" onclick="switchTab('stats', this)">Overview</button>
+        <button class="tab-btn" onclick="switchTab('ingest', this)">Ingest</button>
+        <button class="tab-btn" onclick="switchTab('history', this); loadIngestionHistory();">History</button>
+      </div>
+
+      <div class="tab-content-container">
+        <!-- Stats Tab -->
+        <div id="tab-stats" class="tab-content">
+          <div class="stats-bento-grid">
+            <div class="stat-tile"><div class="stat-val" id="statEntities">—</div><div class="stat-lbl">Entities</div></div>
+            <div class="stat-tile"><div class="stat-val" id="statRelations">—</div><div class="stat-lbl">Relations</div></div>
+            <div class="stat-tile"><div class="stat-val" id="statPapers">—</div><div class="stat-lbl">Papers</div></div>
+            <div class="stat-tile"><div class="stat-val" id="statVectors">—</div><div class="stat-lbl">Vectors</div></div>
+          </div>
+        </div>
+        
+        <!-- Ingest Tab -->
+        <div id="tab-ingest" class="tab-content" style="display:none;">
+          <div class="form-group">
+            <div class="sub-tabs">
+              <button class="sub-tab-btn active" id="subTabArxiv" onclick="switchIngestMode('arxiv')">arXiv Search</button>
+              <button class="sub-tab-btn" id="subTabText" onclick="switchIngestMode('text')">Raw Text</button>
+            </div>
+
+            <!-- ArXiv Ingest Form -->
+            <div id="ingestArxivForm">
+              <label>arXiv Query</label>
+              <input type="text" id="arxivQuery" placeholder="e.g. Model Distillation BERT">
+              <div style="display:flex; gap:8px; margin-top:6px;">
+                <div style="flex:1;">
+                  <label>Max Papers</label>
+                  <input type="number" id="arxivMax" value="5" min="1" max="20">
+                </div>
+                <button class="btn-bento" id="btnArxivIngest" style="align-self:flex-end;" onclick="ingestArxiv()">Extract</button>
+              </div>
+            </div>
+
+            <!-- Text Ingest Form -->
+            <div id="ingestTextForm" style="display:none;">
+              <label>Paper / Document Title</label>
+              <input type="text" id="textTitle" placeholder="e.g. Quantization Study">
+              <label style="margin-top:4px;">Abstract / Content Text</label>
+              <textarea id="textContent" rows="3" placeholder="Paste research text or abstract here..."></textarea>
+              <button class="btn-bento" id="btnTextIngest" style="margin-top:6px;" onclick="ingestText()">Extract Triples</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Ingestion History Tab -->
+        <div id="tab-history" class="tab-content" style="display:none;">
+          <div class="form-group" style="padding: 12px;">
+            <div class="history-header">
+              <span class="history-subtitle">Recently processed knowledge graph nodes</span>
+              <button onclick="loadIngestionHistory()" class="secondary-btn-sm">↻ Refresh</button>
+            </div>
+            <div class="history-list-container">
+              <ul id="ingestion-history-list" class="history-list">
+                <li class="loading-text">Loading history...</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Agent Workspace Chat Bento -->
+    <div class="bento-card chat-bento">
+      <div class="bento-header">
+        <div class="bento-title">AGENT WORKSPACE</div>
+        <div class="pill-badge" style="font-size:9px;">Hybrid RAG</div>
+      </div>
+      
+      <div class="chat-stream" id="chatArea">
+        <div class="message assistant">
+          <div class="msg-bubble">
+            Select a node in the graph to inspect entity relationships or click a category in the legend below to filter.
+          </div>
+        </div>
+      </div>
+
+      <div style="padding:10px 12px; border-top:1px solid var(--border); background:#fafafa; display:flex; flex-direction:column; gap:6px;">
+        <textarea id="queryInput" placeholder="Ask a question..." rows="2" style="resize:none;" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendQuery();}"></textarea>
+        <button class="btn-bento" id="btnSendQuery" onclick="sendQuery()">Submit Prompt</button>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- RIGHT COLUMN: GRAPH CANVAS -->
+  <div class="canvas-bento-container">
+    <div class="canvas-bg-grid"></div>
+    <svg id="graphSvg"></svg>
+
+    <!-- Legend with Click-to-Filter Capabilities -->
+    <div class="legend-bento" id="graphLegend"></div>
+
+    <!-- Inspector Drawer -->
+    <div class="inspector-drawer" id="inspectorDrawer">
+      <div class="bento-header">
+        <div class="bento-title">NODE INSPECTOR</div>
+        <button onclick="closeInspector()" style="border:none; background:transparent; cursor:pointer; color:var(--text-muted); font-size:14px;">✕</button>
+      </div>
+      <div style="padding:16px; overflow-y:auto; flex:1; display:flex; flex-direction:column; gap:12px;">
+        <div>
+          <span class="pastel-badge" id="drawerBadge">Method</span>
+          <h2 id="drawerTitle" style="font-size:15px; font-weight:700; color:var(--text-primary); margin-top:6px;">Node Details</h2>
+        </div>
+
+        <div style="border-top:1px solid var(--border); padding-top:10px;">
+          <label style="font-size:9.5px; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Mentions / Weight</label>
+          <div id="drawerMentions" style="font-size:12px; font-weight:600; color:var(--text-primary); margin-top:2px;">—</div>
+        </div>
+
+        <div style="border-top:1px solid var(--border); padding-top:10px;">
+          <label style="font-size:9.5px; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Summary / Context</label>
+          <p id="drawerDescription" style="font-size:11.5px; color:var(--text-secondary); line-height:1.5; margin-top:4px;">No node selected.</p>
+        </div>
+
+        <div id="drawerExternalLinkContainer" style="border-top:1px solid var(--border); padding-top:10px; display:none;">
+          <label style="font-size:9.5px; font-weight:700; color:var(--text-muted); text-transform:uppercase;">External Reference</label>
+          <div>
+            <a id="drawerExternalLink" href="#" target="_blank" class="external-link-btn">
+              Search Google Scholar ↗
+            </a>
+          </div>
+        </div>
       </div>
     </div>
   </div>
 
-</div>
-
-<div id="paperDetailPanel" style="
-  position: fixed;
-  top: 20px;
-  right: -460px; 
-  width: 420px;
-  height: calc(100vh - 40px);
-  background: rgba(10, 10, 10, 0.85);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  z-index: 999;
-  transition: right 0.3s cubic-bezier(0.25, 1, 0.5, 1);
-  display: flex;
-  flex-direction: column;
-  box-shadow: -8px 0 32px rgba(0,0,0,0.6);
-  pointer-events: auto;
-">
-  <div style="padding: 20px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between;">
-    <span style="font-family: 'Syne', sans-serif; font-weight: 700; font-size: 11px; color: var(--accent2); letter-spacing: 0.1em; text-transform: uppercase;">Paper Metadata</span>
-    <button onclick="closePaperPanel()" style="background: transparent; border: none; color: var(--muted); cursor: pointer; font-size: 14px; padding: 4px; transition: color 0.2s;">✕</button>
-  </div>
-
-  <div style="flex: 1; overflow-y: auto; padding: 24px; display: flex; flex-direction: column; gap: 20px;">
-    <div>
-      <h2 id="paperPanelTitle" style="font-family: 'Syne', sans-serif; font-weight: 700; font-size: 18px; color: var(--accent); line-height: 1.4; margin-bottom: 8px;">Paper Title</h2>
-      <div id="paperPanelYear" style="font-size: 11px; color: var(--muted);">Published: —</div>
-    </div>
-
-    <div style="border-top: 1px solid var(--border); padding-top: 16px;">
-      <div style="font-size: 10px; color: var(--muted); letter-spacing: 0.05em; text-transform: uppercase; margin-bottom: 8px;">AI-Generated Summary</div>
-      <p id="paperPanelSummary" style="font-size: 12px; color: var(--text); line-height: 1.6;">No summary extracted yet.</p>
-    </div>
-
-    <div style="border-top: 1px solid var(--border); padding-top: 16px;">
-      <div style="font-size: 10px; color: var(--muted); letter-spacing: 0.05em; text-transform: uppercase; margin-bottom: 8px;">Key Concepts</div>
-      <div id="paperPanelConcepts" style="display: flex; flex-wrap: wrap; gap: 6px;"></div>
-    </div>
-  </div>
-
-  <div style="padding: 16px 24px; border-top: 1px solid var(--border); background: rgba(0,0,0,0.2);">
-    <a id="paperPanelLink" href="#" target="_blank" class="btn-primary" style="display: block; text-align: center; text-decoration: none; line-height: 18px;">OPEN EXTERNAL ARXIV SOURCE ↗</a>
-  </div>
 </div>
 
 <script>
 // ══════════════════════════════════════════════
-//  CONFIG & DYNAMIC HIGH-CONTRAST COLORS
+//  SOLID VIBRANT PASTEL PALETTE + ACCENT DOTS
 // ══════════════════════════════════════════════
-const TYPE_COLORS = {
-  Paper:        '#64c0e2', // --accent2 (Light Blue)
-  Model:        '#5c97f0', // --accent3 (Cornflower Blue)
-  Concept:      '#ffffff', // --accent  (Pure White)
-  Method:       '#f0a05c', // --warn    (Warm Orange)
-  Dataset:      '#f05c6a', // --danger  (Soft Red)
-  Metric:       '#64c0e2', // --accent2 
-  Author:       '#5c97f0', // --accent3 
-  Organisation: '#ffffff', // --accent
-  Unknown:      '#606470', // --muted   (Slate Grey)
-  unknown:      '#606470'
+const HUSHED_PASTELS = {
+  Paper:        { bg: '#818cf8', border: '#3730a3', text: '#ffffff' }, // Solid Indigo
+  Method:       { bg: '#34d386', border: '#065f46', text: '#ffffff' }, // Solid Mint Green
+  Model:        { bg: '#de526e', border: '#6e091d', text: '#ffffff' }, // Solid Red
+  Metric:      { bg: '#fb923c', border: '#9a3412', text: '#ffffff' }, // Solid Amber / Orange
+  Author:       { bg: '#f472b6', border: '#9d174d', text: '#ffffff' }, // Solid Pink
+  Concept: { bg: '#4eb7e6', border: '#075985', text: '#ffffff' }, // Solid Sky Blue
+  Dataset:       { bg: '#facc15', border: '#854d0e', text: '#ffffff' }, // Solid Soft Yellow
+  Unknown:      { bg: '#a1a1aa', border: '#27272a', text: '#ffffff' }, // Solid Slate
+  Organisation:      { bg: '#d4d4d8', border: '#52525b', text: '#ffffff' }
 };
-const typeColor = (type) => TYPE_COLORS[type] || TYPE_COLORS.Unknown;
-const hexToRgba = (hex, alpha) => { const r=parseInt(hex.slice(1,3),16),g=parseInt(hex.slice(3,5),16),b=parseInt(hex.slice(5,7),16); return `rgba(${r},${g},${b},${alpha})`; };
+
+const getPastel = (type) => HUSHED_PASTELS[type] || HUSHED_PASTELS.Unknown;
 const BASE = () => document.getElementById('apiUrl').value.replace(/\/$/,'');
 
-if (location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
-  document.getElementById('apiUrl').value = 'https://research-agent-s7ye.onrender.com';
-}
+let activeCategories = new Set();
+let graphNodes = [];
+let graphLinks = [];
+let simulation;
 
-function switchTab(name, btn) {
-  document.querySelectorAll('.tab-content').forEach(t=>t.classList.remove('active'));
-  document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
-  document.getElementById('tab-'+name).classList.add('active');
+function switchTab(tabId, btn) {
+  document.querySelectorAll('.tab-content').forEach(el => el.style.display = 'none');
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('tab-' + tabId).style.display = 'block';
   btn.classList.add('active');
 }
-function escHtml(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>'); }
-function scrollChat() { const c = document.getElementById('chatArea'); c.scrollTop = c.scrollHeight; }
 
-// ══════════════════════════════════════════════
-//  API INTEGRATIONS
-// ══════════════════════════════════════════════
+function switchIngestMode(mode) {
+  if (mode === 'arxiv') {
+    document.getElementById('ingestArxivForm').style.display = 'block';
+    document.getElementById('ingestTextForm').style.display = 'none';
+    document.getElementById('subTabArxiv').classList.add('active');
+    document.getElementById('subTabText').classList.remove('active');
+  } else {
+    document.getElementById('ingestArxivForm').style.display = 'none';
+    document.getElementById('ingestTextForm').style.display = 'block';
+    document.getElementById('subTabText').classList.add('active');
+    document.getElementById('subTabArxiv').classList.remove('active');
+  }
+}
+
+function closeInspector() {
+  document.getElementById('inspectorDrawer').classList.remove('open');
+}
+
 async function checkHealth() {
-  const dot=document.getElementById('statusDot'), txt=document.getElementById('statusText');
+  const badge = document.getElementById('statusBadge');
+  badge.textContent = 'Ping...';
+  badge.style.background = '#f4f4f5';
+  badge.style.color = '#52525b';
+
   try {
-    const r=await fetch(BASE()+'/health');
-    if(r.ok){dot.className='status-dot online';txt.textContent='connected'; addLog('info','API OK'); refreshStats(); }
-    else{dot.className='status-dot';txt.textContent='error '+r.status;}
-  } catch(e){dot.className='status-dot';txt.textContent='unreachable'; addLog('error','API unreachable: '+e.message);}
+    const r = await fetch(BASE() + '/health');
+    if (r.ok) {
+      badge.textContent = 'Connected';
+      badge.style.background = '#dcfce7';
+      badge.style.color = '#166534';
+      refreshStats();
+      loadGraph();
+      loadIngestionHistory();
+    } else {
+      throw new Error();
+    }
+  } catch(e) {
+    badge.textContent = 'Unreachable';
+    badge.style.background = '#fee2e2';
+    badge.style.color = '#991b1b';
+  }
 }
 
 async function refreshStats() {
   try {
-    const r=await fetch(BASE()+'/stats'); if(!r.ok)return;
-    const d=await r.json();
-    document.getElementById('statEntities').textContent=d.entities??'—';
-    document.getElementById('statRelations').textContent=d.relations??'—';
-    document.getElementById('statPapers').textContent=d.papers??'—';
-    document.getElementById('statVectors').textContent=d.vector_index_size??'—';
-  } catch{}
+    const r = await fetch(BASE() + '/stats'); 
+    if (!r.ok) return;
+    const d = await r.json();
+    document.getElementById('statEntities').textContent = d.entities ?? '—';
+    document.getElementById('statRelations').textContent = d.relations ?? '—';
+    document.getElementById('statPapers').textContent = d.papers ?? '—';
+    document.getElementById('statVectors').textContent = d.vector_index_size ?? '—';
+  } catch(e) {}
 }
 
-function addLog(level,msg){
-  const area=document.getElementById('logArea');
-  if(area.querySelector('.empty-state') || area.children.length === 1 && area.children[0].tagName==='DIV') area.innerHTML='';
-  const time=new Date().toTimeString().slice(0,8);
-  const entry=document.createElement('div'); entry.className='log-entry';
-  const color = level==='error' ? 'var(--danger)' : level==='warn' ? 'var(--warn)' : 'var(--accent2)';
-  entry.innerHTML=`<span class="log-time">${time}</span><span style="color:${color};width:40px">${level.toUpperCase()}</span><span>${escHtml(msg)}</span>`;
-  area.appendChild(entry); area.scrollTop=area.scrollHeight;
-}
-
-// ══════════════════════════════════════════════
-//  CHAT & RAG TRACKING
-// ══════════════════════════════════════════════
-async function sendQuery() {
-  const input=document.getElementById('queryInput'), q=input.value.trim(); if(!q)return;
-  const includeCtx=document.getElementById('includeCtx').checked;
-  const btn=document.getElementById('sendBtn'), chatArea=document.getElementById('chatArea');
-  
-  if(chatArea.innerHTML.includes('Workspace initialized')) chatArea.innerHTML='';
-  
-  chatArea.appendChild(createBubble('user', q));
-  input.value=''; input.style.height='auto'; btn.disabled=true; scrollChat();
-  
-  const thinking=createBubble('assistant', '<span style="color:var(--muted)">Thinking...</span>');
-  chatArea.appendChild(thinking); scrollChat();
-  
+async function loadIngestionHistory() {
+  const historyList = document.getElementById('ingestion-history-list');
   try {
-    const r=await fetch(BASE()+'/query',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q,include_context:includeCtx})});
-    thinking.remove();
-    if(!r.ok){chatArea.appendChild(createBubble('assistant','⚠ Error: '+await r.text()));}
-    else{
-      const d=await r.json();
-      chatArea.appendChild(answerBubble(d, includeCtx));
-      addLog('info', `Query routed to ${d.route} (${d.graph_triple_count} triples)`);
+    const response = await fetch(BASE() + '/api/ingestion/history');
+    const data = await response.json();
+    
+    if (!data.history || data.history.length === 0) {
+      historyList.innerHTML = '<li class="empty-text">No ingestion history found.</li>';
+      return;
     }
-  } catch(e){thinking.remove(); chatArea.appendChild(createBubble('assistant','⚠ Network error: '+e.message));}
-  btn.disabled=false; scrollChat();
+
+    historyList.innerHTML = data.history.map(item => `
+      <li class="history-item">
+        <span class="history-title">📚 ${escapeHtml(item.title)}</span>
+        <span class="history-meta">Type: ${escapeHtml(item.type || 'Entity')} | Size: ${item.text_length} chars</span>
+      </li>
+    `).join('');
+  } catch (err) {
+    console.error('Failed to load ingestion history:', err);
+    historyList.innerHTML = '<li class="error-text">Failed to load history.</li>';
+  }
 }
 
-function createBubble(role, text) {
-  const d=document.createElement('div'); d.className='message '+role;
-  d.innerHTML=`<div class="msg-bubble">${role==='user'?escHtml(text):text}</div>`;
-  return d;
+function escapeHtml(str) {
+  return String(str).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
-function answerBubble(d, showCtx) {
-  const wrap = document.createElement('div'); 
-  wrap.className = 'message assistant';
-  
-  let safeText = escHtml(d.answer);
-  
-  // Using a string-based RegExp to prevent the chat from eating the brackets!
-  const pattern = new RegExp("\\", "g");
-  let formatted = safeText.replace(pattern, '<span style="color:var(--accent2);font-size:10px">[src: $1]</span>');
-  
-  let meta = `<div class="msg-meta"><span class="route-badge route-${d.route || 'hybrid'}">${(d.route || 'HYBRID').toUpperCase()}</span><span>${d.graph_triple_count} triples</span><span>${d.vector_result_count} vectors</span></div>`;
-  
-  wrap.innerHTML = `<div class="msg-bubble">${formatted}</div>${meta}`;
-  
-  return wrap;
-}
-
-// ══════════════════════════════════════════════
-//  INGESTION METHODS
-// ══════════════════════════════════════════════
 async function ingestArxiv() {
-  const q=document.getElementById('arxivQuery').value.trim(), max=parseInt(document.getElementById('arxivMax').value)||5; if(!q)return;
-  addLog('info','Fetching papers for "'+q+'"...');
+  const q = document.getElementById('arxivQuery').value.trim();
+  const maxResults = parseInt(document.getElementById('arxivMax').value) || 5;
+  const btn = document.getElementById('btnArxivIngest');
+
+  if (!q) return;
+  btn.disabled = true;
+  btn.textContent = 'Ingesting...';
+
   try {
-    const r=await fetch(BASE()+'/ingest/arxiv',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({arxiv_query:q,max_results:max})});
-    const d=await r.json();
-    addLog('info',`Ingested ${d.documents_processed} papers, extracted ${d.triples_extracted} triples.`);
-    refreshStats();
-  } catch(e){addLog('error','Ingest failed: '+e.message);}
+    const r = await fetch(BASE() + '/ingest/arxiv', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ arxiv_query: q, max_results: maxResults })
+    });
+    if (r.ok) {
+      document.getElementById('arxivQuery').value = '';
+      refreshStats();
+      loadGraph();
+      loadIngestionHistory();
+    }
+  } catch(e) {
+    alert('Failed to ingest arXiv query.');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Extract';
+  }
 }
 
 async function ingestText() {
-  const title=document.getElementById('textTitle').value.trim(), text=document.getElementById('textContent').value.trim(); if(!title||!text)return;
-  addLog('info','Processing raw text...');
+  const title = document.getElementById('textTitle').value.trim();
+  const text = document.getElementById('textContent').value.trim();
+  const btn = document.getElementById('btnTextIngest');
+
+  if (!text) return;
+  btn.disabled = true;
+  btn.textContent = 'Extracting...';
+
   try {
-    const r=await fetch(BASE()+'/ingest/text',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title,text,doc_id:''})});
-    const d=await r.json();
-    addLog('info',`Extracted ${d.triples_extracted} triples from text.`);
-    refreshStats();
-  } catch(e){addLog('error','Ingest failed: '+e.message);}
+    const r = await fetch(BASE() + '/ingest/text', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ title: title || 'Untitled Note', text: text, doc_id: '' })
+    });
+    if (r.ok) {
+      document.getElementById('textTitle').value = '';
+      document.getElementById('textContent').value = '';
+      refreshStats();
+      loadGraph();
+      loadIngestionHistory();
+    }
+  } catch(e) {
+    alert('Failed to ingest text content.');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Extract Triples';
+  }
+}
+
+async function sendQuery() {
+  const input = document.getElementById('queryInput'), q = input.value.trim();
+  if (!q) return;
+  const chatArea = document.getElementById('chatArea');
+  const btn = document.getElementById('btnSendQuery');
+
+  chatArea.innerHTML += `<div class="message user"><div class="msg-bubble">${q}</div></div>`;
+  input.value = '';
+  chatArea.scrollTop = chatArea.scrollHeight;
+  btn.disabled = true;
+
+  try {
+    const r = await fetch(BASE() + '/query', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ question: q, include_context: true })
+    });
+    if (r.ok) {
+      const d = await r.json();
+      const route = (d.routing_strategy || d.route || 'HYBRID').toLowerCase();
+      const badgeClass = route.includes('cypher') ? 'route-cypher' : (route.includes('vector') ? 'route-vector' : 'route-hybrid');
+
+      chatArea.innerHTML += `
+        <div class="message assistant">
+          <div class="msg-bubble">
+            <span class="route-tag ${badgeClass}">${route.toUpperCase()}</span>
+            <div>${d.answer || d.response || 'No response generated.'}</div>
+          </div>
+        </div>
+      `;
+    } else {
+      throw new Error();
+    }
+  } catch(e) {
+    chatArea.innerHTML += `<div class="message assistant"><div class="msg-bubble" style="color:#ef4444">Failed to reach RAG service.</div></div>`;
+  } finally {
+    btn.disabled = false;
+  }
+  chatArea.scrollTop = chatArea.scrollHeight;
 }
 
 // ══════════════════════════════════════════════
-//  GRAPH VISUALIZATION TRACKING
+//  GRAPH ENGINE WITH FORCE SIMULATION
 // ══════════════════════════════════════════════
-let allNodes=[], allLinks=[], simulation, svgSel, zoomBehavior;
-const nodeRadius = d => Math.max(5, Math.min(24, 5 + Math.sqrt(d.mention_count||1)*2.5));
-
-function closePaperPanel() {
-  document.getElementById('paperDetailPanel').style.right = '-460px';
-}
-
 async function loadGraph() {
   try {
-    // Fetches live data from your production backend
-    const r = await fetch(BASE() + '/graph?limit=250'); 
-    if (!r.ok) {
-      addLog('error', 'Graph API returned ' + r.status);
-      return;
-    }
+    const r = await fetch(BASE() + '/graph?limit=250');
+    if (!r.ok) return;
+    const raw = await r.json();
+    graphNodes = raw.nodes || [];
+    graphLinks = raw.links || raw.relations || [];
     
-    const raw = await r.json(); 
-    allNodes = raw.nodes || []; 
-    allLinks = raw.links || [];
-    
-    buildLegend(allNodes); 
-    renderGraph(allNodes, allLinks);
-    addLog('info', 'Live graph data synced successfully.');
-  } catch(e) { 
-    addLog('error', 'Graph load failed: ' + e.message); 
-  }
+    const presentTypes = [...new Set(graphNodes.map(n => n.type || 'Unknown'))];
+    activeCategories = new Set(presentTypes);
+
+    renderGraph(graphNodes, graphLinks);
+    buildLegend(graphNodes);
+  } catch(e) {}
 }
 
 function buildLegend(nodes) {
   const legend = document.getElementById('graphLegend');
-  if(!nodes.length) { legend.innerHTML = '<span style="color:var(--muted)">No graph data yet</span>'; return; }
-  
-  const typeCounts = {}; nodes.forEach(n => { const t = n.type||'Unknown'; typeCounts[t] = (typeCounts[t]||0)+1; });
+  const types = [...new Set(nodes.map(n => n.type || 'Unknown'))];
   legend.innerHTML = '';
-  Object.entries(typeCounts).sort((a,b)=>b[1]-a[1]).forEach(([type, count]) => {
-    const col = typeColor(type);
-    const item = document.createElement('div'); item.className = 'legend-item';
-    item.innerHTML = `<div class="legend-dot" style="background:${col}"></div><span>${type}</span><span style="opacity:0.5">${count}</span>`;
-    legend.appendChild(item);
+
+  types.forEach(type => {
+    const pastel = getPastel(type);
+    const isActive = activeCategories.has(type);
+    
+    const chip = document.createElement('div');
+    chip.className = `legend-chip ${isActive ? 'active' : 'dimmed'}`;
+    chip.innerHTML = `
+      <div class="legend-dot" style="background:${pastel.bg}; border:1px solid ${pastel.border};"></div>
+      <span>${type}</span>
+    `;
+    
+    chip.onclick = () => toggleCategoryFilter(type);
+    legend.appendChild(chip);
   });
+}
+
+function toggleCategoryFilter(type) {
+  if (activeCategories.has(type)) {
+    activeCategories.delete(type);
+  } else {
+    activeCategories.add(type);
+  }
+
+  if (activeCategories.size === 0) {
+    const allTypes = [...new Set(graphNodes.map(n => n.type || 'Unknown'))];
+    activeCategories = new Set(allTypes);
+  }
+
+  buildLegend(graphNodes);
+  applyCategoryFilter();
+}
+
+function applyCategoryFilter() {
+  const svg = d3.select('#graphSvg');
+
+  svg.selectAll('.node-group')
+    .transition()
+    .duration(200)
+    .style('opacity', d => activeCategories.has(d.type || 'Unknown') ? 1 : 0.08)
+    .style('pointer-events', d => activeCategories.has(d.type || 'Unknown') ? 'all' : 'none');
+
+  svg.selectAll('.graph-link')
+    .transition()
+    .duration(200)
+    .style('opacity', d => {
+      const sourceActive = activeCategories.has(d.source.type || 'Unknown');
+      const targetActive = activeCategories.has(d.target.type || 'Unknown');
+      return sourceActive && targetActive ? 0.7 : 0.04;
+    });
+}
+
+function getNodeRadius(type, mentionCount = 1) {
+  if (type === 'root') return 28;
+  if (type === 'subtopic') return 18;
+  return Math.max(11, Math.min(22, 11 + (mentionCount || 1) * 1.5));
 }
 
 function renderGraph(nodes, links) {
-  const svg=document.getElementById('graphSvg');
-  const W=svg.clientWidth, H=svg.clientHeight;
+  const svg = document.getElementById('graphSvg');
+  const W = svg.clientWidth || 800;
+  const H = svg.clientHeight || 600;
+
+  if (simulation) simulation.stop();
+
   d3.select(svg).selectAll('*').remove();
-  svgSel=d3.select(svg);
+  const svgSel = d3.select(svg);
 
-  const g=svgSel.append('g');
-
-  zoomBehavior=d3.zoom().scaleExtent([0.1, 5]).on('zoom', e => {
-    g.attr('transform', e.transform);
-    g.selectAll('.node-label').attr('opacity', e.transform.k > 1.5 ? 0.8 : 0);
-  });
+  const zoomBehavior = d3.zoom().scaleExtent([0.2, 1]).on('zoom', e => g.attr('transform', e.transform));
   svgSel.call(zoomBehavior);
 
-  const defs=svgSel.append('defs');
-  Object.entries(TYPE_COLORS).forEach(([type,col])=>{
-    defs.append('marker').attr('id','arr-'+type).attr('viewBox','0 -4 10 8').attr('refX',20).attr('refY',0).attr('markerWidth',4).attr('markerHeight',4).attr('orient','auto').append('path').attr('d','M0,-4L10,0L0,4').attr('fill',col).attr('opacity',0.4);
-  });
+  const g = svgSel.append('g');
 
-  const nodeById=Object.fromEntries(nodes.map(n=>[n.id,n]));
+  // Center view offset
+  const initialTransform = d3.zoomIdentity.translate(W / 2, H / 2).scale(0.6);
+  svgSel.call(zoomBehavior.transform, initialTransform);
 
-  const linkSel=g.append('g').selectAll('line').data(links).join('line')
-    .attr('stroke','rgba(255,255,255,0.1)').attr('stroke-width',d=>Math.max(0.5,(d.confidence||0.8)*1.5))
-    .attr('marker-end',d=>'url(#arr-'+(nodeById[d.target?.id??d.target]?.type||'Unknown')+')');
+  // Link elements
+  const linkSel = g.append('g').selectAll('line').data(links).join('line')
+    .attr('class', 'graph-link')
+    .attr('stroke', '#d4d4d8')
+    .attr('stroke-width', 1.2)
+    .style('opacity', 0.7);
 
-  const nodeSel=g.append('g').selectAll('g').data(nodes).join('g').attr('cursor','pointer')
+  // Node elements
+  const nodeSel = g.append('g').selectAll('g').data(nodes).join('g')
+    .attr('class', 'node-group')
+    .attr('cursor', 'pointer')
     .call(d3.drag()
-      .on('start',(e,d)=>{if(!e.active)simulation.alphaTarget(0.3).restart();d.fx=d.x;d.fy=d.y;})
-      .on('drag',(e,d)=>{d.fx=e.x;d.fy=e.y;})
-      .on('end',(e,d)=>{if(!e.active)simulation.alphaTarget(0);d.fx=null;d.fy=null;}));
+      .on('start', (e, d) => { if (!e.active) simulation.alphaTarget(0.2).restart(); d.fx = d.x; d.fy = d.y; })
+      .on('drag', (e, d) => { d.fx = e.x; d.fy = e.y; })
+      .on('end', (e, d) => { if (!e.active) simulation.alphaTarget(0); d.fx = null; d.fy = null; }));
 
-  nodeSel.append('circle').attr('r',d=>nodeRadius(d)).attr('fill',d=>typeColor(d.type||'Unknown')).attr('stroke','#0a0c10').attr('stroke-width',1.5);
-  
+  // Outer Solid Node Circle
+  nodeSel.append('circle')
+    .attr('class', 'node-circle')
+    .attr('r', d => getNodeRadius(d.type, d.mention_count))
+    .attr('fill', d => getPastel(d.type).bg)
+    .attr('stroke', d => getPastel(d.type).border)
+    .attr('stroke-width', 2);
+  nodeSel.append('circle')
+    .attr('r', 1.5)
+    .attr('fill', '#ffffff')
+    .attr('opacity', 0.9);
+  // Text Label
   nodeSel.append('text')
-    .attr('class', 'node-label') 
-    .attr('dy', d => nodeRadius(d) + 8)
+    .attr('class', 'node-label')
+    .attr('dy', d => 16 + getNodeRadius(d.type, d.mention_count))
     .attr('text-anchor', 'middle')
-    .attr('font-size', 5) 
-    .attr('fill', 'rgba(255,255,255,0.8)')
-    .attr('opacity', 0) 
-    .attr('pointer-events', 'none')
-    .text(d => d.name.length > 20 ? d.name.slice(0, 18) + '…' : d.name);
+    .text(d => d.name && d.name.length > 16 ? d.name.slice(0, 14) + '…' : (d.name || d.id));
 
+  // Node Click Inspector
   nodeSel.on('click', (e, d) => {
     e.stopPropagation();
+    const pastel = getPastel(d.type);
+    const drawer = document.getElementById('inspectorDrawer');
+    
+    document.getElementById('drawerTitle').textContent = d.name || d.id;
+    document.getElementById('drawerBadge').textContent = d.type || 'Entity';
+    document.getElementById('drawerBadge').style.background = pastel.bg;
+    document.getElementById('drawerBadge').style.color = '#ffffff';
+    document.getElementById('drawerBadge').style.border = `1px solid ${pastel.border}`;
+    
+    document.getElementById('drawerMentions').textContent = `${d.mention_count || 1} explicit graph reference(s)`;
+    document.getElementById('drawerDescription').textContent = d.summary || d.abstract || `Connected ${d.type || 'entity'} extracted inside the knowledge graph network.`;
 
-    if (d.type === 'Paper') {
-      document.getElementById('paperPanelTitle').textContent = d.name;
-      document.getElementById('paperPanelYear').textContent = `Published: ${d.year || '2026'}`;
-      document.getElementById('paperPanelSummary').textContent = d.summary || "This document indexes structural pipeline parameters utilizing optimized matrix distributions.";
-      
-      const conceptContainer = document.getElementById('paperPanelConcepts');
-      conceptContainer.innerHTML = '';
-      const dummyConcepts = d.concepts || ['Quantization', 'Data Engineering', 'RAG Context'];
-      dummyConcepts.forEach(c => {
-        conceptContainer.innerHTML += `<span class="tt-badge" style="background: rgba(94, 106, 210, 0.15); color: var(--accent2); margin-right:4px;">${escHtml(c)}</span>`;
-      });
-
-      const linkBtn = document.getElementById('paperPanelLink');
-      linkBtn.href = d.url || `https://arxiv.org/abs/2606.${d.id || '1234'}`;
-
-      document.getElementById('paperDetailPanel').style.right = '20px';
-      return; 
+    const linkContainer = document.getElementById('drawerExternalLinkContainer');
+    const linkBtn = document.getElementById('drawerExternalLink');
+    if (d.url || d.arxiv_id || d.type === 'Paper') {
+      linkContainer.style.display = 'block';
+      linkBtn.href = d.url || (d.arxiv_id ? `https://arxiv.org/abs/${d.arxiv_id}` : `https://scholar.google.com/scholar?q=${encodeURIComponent(d.name)}`);
+      linkBtn.textContent = d.arxiv_id ? 'View arXiv Paper ↗' : 'Search Scholar ↗';
+    } else {
+      linkContainer.style.display = 'none';
     }
 
-    const chatArea = document.getElementById('chatArea');
-    if(chatArea.innerHTML.includes('Workspace initialized')) chatArea.innerHTML='';
-    
-    const col = typeColor(d.type || 'Unknown');
-    const html = `
-      <div class="inspector-card">
-        <div class="inspector-title" style="color:${col}">${escHtml(d.name)}</div>
-        <div style="margin-bottom:10px;"><span class="tt-badge" style="background:${hexToRgba(col,0.2)};color:${col}">${escHtml(d.type||'Unknown')}</span></div>
-        <div style="font-size:10px; color:var(--muted); line-height:1.6">
-          Mentions in Graph: <span style="color:var(--text)">${d.mention_count||1}</span><br>
-          Connected Edges: <span style="color:var(--text)">${links.filter(l=>(l.source.id||l.source)===d.id || (l.target.id||l.target)===d.id).length}</span>
-        </div>
-      </div>
-    `;
-    chatArea.innerHTML += html; scrollChat();
-    
-    const nb=new Set([d.id]);
-    links.forEach(l=>{const s=l.source.id??l.source, t=l.target.id??l.target; if(s===d.id)nb.add(t); if(t===d.id)nb.add(s);});
-    nodeSel.attr('opacity', n=>nb.has(n.id)?1:0.1);
-    linkSel.attr('stroke-opacity', l=>(l.source.id===d.id||l.target.id===d.id)?1:0.02);
-  });
-  
-  svgSel.on('click',()=>{ 
-    nodeSel.attr('opacity',1); 
-    linkSel.attr('stroke-opacity',1); 
-    closePaperPanel();
+    drawer.classList.add('open');
   });
 
-  simulation=d3.forceSimulation(nodes)
-      .force('link', d3.forceLink(links).id(d => d.id).distance(120).strength(0.5))
-      .force('charge', d3.forceManyBody().strength(-500).distanceMax(800))
-      .force('radial', d3.forceRadial(160, (W-300)/2, H/2).strength(0.08))
-      .force('collision', d3.forceCollide().radius(d => nodeRadius(d) + 35).strength(1))
-      .alphaDecay(0.02)
-      .velocityDecay(0.6)
-    .on('tick',()=>{
-      linkSel.attr('x1',d=>d.source.x).attr('y1',d=>d.source.y).attr('x2',d=>d.target.x).attr('y2',d=>d.target.y);
-      nodeSel.attr('transform',d=>`translate(${d.x},${d.y})`);
+  svgSel.on('click', () => closeInspector());
+
+  // Category layout clustering offsets
+  const uniqueCategories = [...new Set(nodes.map(n => n.category || n.type || 'Unknown'))];
+  const topicCenters = {};
+  const radius = Math.min(W, H) * 0.25;
+  uniqueCategories.forEach((cat, idx) => {
+    const angle = (idx / uniqueCategories.length) * 2 * Math.PI;
+    topicCenters[cat] = {
+      x: Math.cos(angle) * radius,
+      y: Math.sin(angle) * radius
+    };
+  });
+
+  // Force simulation setup
+  simulation = d3.forceSimulation(nodes)
+    .force('x', d3.forceX(d => (topicCenters[d.category || d.type] || {x: 0}).x).strength(0.2))
+    .force('y', d3.forceY(d => (topicCenters[d.category || d.type] || {y: 0}).y).strength(0.2))
+    .force('charge', d3.forceManyBody().strength(-350))
+    .force('collide', d3.forceCollide().radius(d => getNodeRadius(d.type, d.mention_count) + 12))
+    .force('link', d3.forceLink(links).id(d => d.id).distance(90))
+    .on('tick', () => {
+      linkSel
+        .attr('x1', d => d.source.x)
+        .attr('y1', d => d.source.y)
+        .attr('x2', d => d.target.x)
+        .attr('y2', d => d.target.y);
+
+      nodeSel.attr('transform', d => `translate(${d.x},${d.y})`);
     });
 }
-let currentLayout = 'network'; // 'network' or 'timeline'
 
-function toggleLayout() {
-  const btn = document.getElementById('layoutToggleBtn');
-  if (currentLayout === 'network') {
-    currentLayout = 'timeline';
-    btn.textContent = 'Layout: Time Track';
-    applyTimelineLayout();
-  } else {
-    currentLayout = 'network';
-    btn.textContent = 'Layout: Network Cluster';
-    applyNetworkLayout();
-  }
-}
-
-function applyTimelineLayout() {
-  if (!allNodes.length || !simulation) return;
-  
-  // Stop the physics simulation to prevent nodes from flying away
-  simulation.stop();
-  
-  const svg = document.getElementById('graphSvg');
-  const W = svg.clientWidth;
-  const H = svg.clientHeight;
-  
-  // 1. Map Entity Types to explicit horizontal tracks (Y-axis allocations)
-  const typeTracks = {
-    'Paper':        H * 0.20,
-    'Model':        H * 0.40,
-    'Method':       H * 0.55,
-    'Dataset':      H * 0.70,
-    'Concept':      H * 0.85,
-    'Organisation': H * 0.85
-  };
-  const defaultTrack = H * 0.50;
-
-  // 2. Parse out temporal properties (Years range roughly from 2025 to 2026)
-  const years = allNodes.map(n => parseInt(n.year) || 2026);
-  const minYear = Math.min(...years);
-  const maxYear = Math.max(...years);
-  const yearRange = maxYear - minYear || 1;
-
-  // 3. Compute static positions
-  allNodes.forEach(node => {
-    const nodeYear = parseInt(node.year) || 2026;
-    
-    // X Position: Map chronologically from left to right with a standard border padding margin
-    const paddingX = 150;
-    node.fx = paddingX + ((nodeYear - minYear) / yearRange) * (W - paddingX * 2.5);
-    
-    // Add minor staggered offsets if multiple nodes hit the exact same year slot to prevent overlaps
-    const countInYear = allNodes.filter(n => (parseInt(n.year)||2026) === nodeYear && n.type === node.type);
-    const index = countInYear.indexOf(node);
-    const staggerOffset = countInYear.length > 1 ? (index - (countInYear.length - 1) / 2) * 45 : 0;
-
-    // Y Position: Bind node to its functional structural track
-    node.fy = (typeTracks[node.type] || defaultTrack) + staggerOffset;
-  });
-
-  // Smoothly animate links and circles into their new slots
-  transitionCanvas();
-}
-
-function applyNetworkLayout() {
-  if (!allNodes.length || !simulation) return;
-  
-  // Release fixed positions so the D3 forces can control placement again
-  allNodes.forEach(node => {
-    node.fx = null;
-    node.fy = null;
-  });
-  
-  simulation.alpha(0.6).restart();
-}
-
-function transitionCanvas() {
-  const duration = 750;
-  
-  // Animate the D3 elements safely using D3 transition parameters
-  d3.select('#graphSvg').selectAll('g').selectAll('circle')
-    .transition().duration(duration).ease(d3.easeCubicOut)
-    .attr('cx', 0) // Centered inside their parent tracking groups
-    .attr('cy', 0);
-
-  d3.select('#graphSvg').selectAll('line')
-    .transition().duration(duration).ease(d3.easeCubicOut)
-    .attr('x1', d => d.source.fx ?? d.source.x)
-    .attr('y1', d => d.source.fy ?? d.source.y)
-    .attr('x2', d => d.target.fx ?? d.target.x)
-    .attr('y2', d => d.target.fy ?? d.target.y);
-    
-  // Force a single tick rendering update to update translate positions cleanly
-  simulation.tick();
-}
-
-setTimeout(checkHealth, 500);
+// Initial health check on load
+setTimeout(checkHealth, 300);
 </script>
 </body>
 </html>
