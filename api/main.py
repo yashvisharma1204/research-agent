@@ -18,7 +18,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from google import genai
+import google.generativeai as genai
 
 from config import cfg
 from graph.merger import KGMerger
@@ -30,9 +30,6 @@ from rag.synthesiser import Synthesiser
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-# Initialize Google GenAI Client
-client = genai.Client(api_key=cfg.GEMINI_API_KEY)
 
 # ── App state ─────────────────────────────────────────────────────────────────
 
@@ -126,10 +123,10 @@ def generate_paper_summary(paper_title: str, text: str, relations: list) -> str:
     Connected Graph Relations: {relations[:15]}
     """
     
-    response = client.models.generate_content(
-        model=cfg.LLM_MODEL,
-        contents=prompt,
-    )
+    genai.configure(api_key=cfg.GEMINI_API_KEY)
+    gemini_model = genai.GenerativeModel(model_name=cfg.LLM_MODEL)
+    
+    response = gemini_model.generate_content(prompt)
     return response.text
 
 
