@@ -1,11 +1,14 @@
 """
 api/main.py
 FastAPI application exposing:
-  POST /query          — ask a question against the KG
-  POST /ingest/arxiv   — fetch & ingest arXiv papers by query
-  POST /ingest/text    — ingest raw text on demand
-  GET  /stats          — graph statistics
-  GET  /health         — liveness probe
+  POST /query                  — ask a question against the KG
+  POST /ingest/arxiv           — fetch & ingest arXiv papers by query
+  POST /ingest/text            — ingest raw text on demand
+  GET  /stats                  — graph statistics
+  GET  /health                 — liveness probe
+  GET  /graph                  — D3/Vis.js visualiser endpoint
+  GET  /api/ingestion/history  — recent ingestion history
+  GET  /api/paper/summary/{paper_title} — real AI summary generator
 """
 from __future__ import annotations
 
@@ -13,17 +16,23 @@ import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from google import genai
 
+from config import cfg
 from graph.merger import KGMerger
 from graph.neo4j_client import get_driver
 from ingestion.extractors import extract_triples
-from ingestion.fetchers import fetch_arxiv, fetch_foundational
+from ingestion.fetchers import fetch_foundational
 from rag.retriever import Retriever
 from rag.synthesiser import Synthesiser
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Initialize Google GenAI Client
+client = genai.Client(api_key=cfg.GEMINI_API_KEY)
 
 # ── App state ─────────────────────────────────────────────────────────────────
 
@@ -49,6 +58,14 @@ app = FastAPI(
     description="KG + RAG research assistant with live graph updates (Gemini-powered)",
     version="1.1.0",
     lifespan=lifespan,
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 
@@ -91,6 +108,29 @@ class StatsResponse(BaseModel):
     relations: int
     papers: int
     vector_index_size: int
+
+
+class GraphResponse(BaseModel):
+    nodes: list[dict]
+    links: list[dict]
+
+
+# ── Helper Function: Generate Scientific Summary ──────────────────────────────
+
+def generate_paper_summary(paper_title: str, text: str, relations: list) -> str:
+    """Uses Gemini to generate a 3-bullet scientific summary using stored text and graph links."""
+    prompt = f"""Provide a concise 3-bullet point scientific summary of this paper based on its abstract text and connected knowledge graph relations:
+    
+    Paper Title: {paper_title}
+    Abstract Text: {text[:3000]}
+    Connected Graph Relations: {relations[:15]}
+    """
+    
+    response = client.models.generate_content(
+        model=cfg.LLM_MODEL,
+        contents=prompt,
+    )
+    return response.text
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
@@ -145,14 +185,15 @@ async def ingest_arxiv_endpoint(req: IngestURLRequest):
         text = f"{doc['title']}. {doc['abstract']}"
         triples = extract_triples(text, source_id=doc["id"])
 
-        # Store paper as entity
+        # Store paper as entity, passing the 'text' property into $props
         merger.upsert_entity(doc["title"], "Paper", {
             "url": doc.get("url", ""),
             "source": doc.get("source", ""),
             "citations": doc.get("citations", 0),
+            "text": doc["abstract"],  # <--- Persisted in Neo4j for summary generation
         })
 
-        # Store triples with types
+        # Store triples
         for t in triples:
             merger.upsert_entity(t.subject, t.subject_type, {})
             merger.upsert_entity(t.obj, t.obj_type, {})
@@ -175,7 +216,9 @@ async def ingest_text_endpoint(req: IngestTextRequest):
     doc_id = req.doc_id or req.title
     triples = extract_triples(req.text, source_id=doc_id)
 
-    merger.upsert_entity(req.title, "Document", {})
+    merger.upsert_entity(req.title, "Document", {
+        "text": req.text,  # <--- Persisted in Neo4j
+    })
     for t in triples:
         merger.upsert_entity(t.subject, t.subject_type, {})
         merger.upsert_entity(t.obj, t.obj_type, {})
@@ -196,12 +239,46 @@ async def stats():
         entities=graph_stats["entities"],
         relations=graph_stats["relations"],
         papers=graph_stats["papers"],
-        vector_index_size=graph_stats.get("vectors", 0),  # <--- NEO4J DEPENDENCY
+        vector_index_size=graph_stats.get("vectors", 0),
     )
+
+
+@app.get("/api/paper/summary/{paper_title}")
+async def get_paper_summary(paper_title: str):
+    """Fetches the real abstract and triples from Neo4j and returns a synthesized summary."""
+    cypher = """
+    MATCH (p:Entity {name: $title})
+    OPTIONAL MATCH (p)-[r]->(o:Entity)
+    RETURN p.text AS text, collect({pred: type(r), obj: o.name}) AS relations
+    """
+    
+    try:
+        with get_driver().session() as session:
+            record = session.run(cypher, title=paper_title).single()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database query error: {str(e)}")
+        
+    if not record or not record.get("text"):
+        raise HTTPException(status_code=404, detail="Paper text or abstract not found in graph storage.")
+        
+    paper_text = record["text"]
+    relations = record["relations"]
+    
+    try:
+        summary = generate_paper_summary(paper_title, paper_text, relations)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Summary generation error: {str(e)}")
+    
+    return {
+        "title": paper_title,
+        "real_summary": summary,
+        "source_text_snippet": paper_text[:400] + "..."
+    }
+
 
 @app.get("/api/ingestion/history")
 async def get_ingestion_history():
-    """Retrieves a history of ingested papers/documents from the graph."""
+    """Retrieves history of ingested papers/documents from the graph."""
     cypher = """
     MATCH (e:Entity)
     WHERE e.text IS NOT NULL
@@ -218,34 +295,12 @@ async def get_ingestion_history():
         return {"history": []}
 
 
-# ── CORS middleware (fixes browser "Failed to fetch") ─────────────────────────
-from fastapi.middleware.cors import CORSMiddleware
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],          # tighten in production
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-
-# ── Graph endpoint ────────────────────────────────────────────────────────────
-
-class GraphResponse(BaseModel):
-    nodes: list[dict]
-    links: list[dict]
-
 @app.get("/graph", response_model=GraphResponse)
 async def get_graph(limit: int = 120):
-    """
-    Returns nodes and edges for the D3/Vis.js visualiser.
-    Directly extracts properties to avoid Neo4j Path serialization errors.
-    """
+    """Returns graph nodes and edges for visualizer UI."""
     if not merger:
         raise HTTPException(503, "Agent not initialised")
 
-    # We explicitly ask for properties instead of a Path object (p)
     cypher = f"""
     MATCH (s:Entity)-[r:RELATION]->(o:Entity)
     RETURN 
@@ -259,7 +314,6 @@ async def get_graph(limit: int = 120):
     links: list[dict] = []
 
     def neo_int(val) -> int:
-        """Convert Neo4j {{ low, high }} integer dict to Python int."""
         if isinstance(val, dict) and "low" in val:
             return val["low"] + val.get("high", 0) * (2 ** 32)
         return int(val) if val is not None else 0
@@ -268,7 +322,6 @@ async def get_graph(limit: int = 120):
         records = session.run(cypher).data()
 
     for rec in records:
-        # Use the entity name as the unique ID for the graph
         s_id = rec.get("s_name") or "?"
         e_id = rec.get("e_name") or "?"
 
