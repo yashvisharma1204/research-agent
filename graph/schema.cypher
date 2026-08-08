@@ -19,7 +19,8 @@ FOR ()-[r:RELATION]-() ON (r.confidence);
 CREATE INDEX relation_last_seen IF NOT EXISTS
 FOR ()-[r:RELATION]-() ON (r.last_seen);
 
-// Optional: Neo4j 5.11+ native vector index (uncomment if using GDS)
+// Optional: Neo4j 5.11+ native vector index. If this is unavailable,
+// entity matching still works via exact-name matching and fallback behavior.
 // CREATE VECTOR INDEX entity_embedding IF NOT EXISTS
 // FOR (e:Entity) ON (e.embedding)
 // OPTIONS {indexConfig: {

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import re
 from datetime import datetime, timezone
 import time
 import arxiv
@@ -159,6 +160,102 @@ def fetch_by_arxiv_ids(paper_ids: list[str]) -> list[dict]:
                 
     return results
 
+def _normalize_text(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", (value or "").lower()).strip()
+
+
+def _title_similarity(query: str, title: str) -> float:
+    query_tokens = set(_normalize_text(query).split())
+    title_tokens = set(_normalize_text(title).split())
+    if not query_tokens or not title_tokens:
+        return 0.0
+    overlap = len(query_tokens & title_tokens)
+    union = len(query_tokens | title_tokens)
+    return overlap / union if union else 0.0
+
+
+def _looks_like_paper_title(query: str) -> bool:
+    text = (query or "").strip()
+    if len(text.split()) < 2:
+        return False
+    if any(ch in text for ch in ['"', '(', ')', ':', '-']):
+        return True
+    if re.search(r"[A-Z]", text):
+        return True
+    lower = text.lower()
+    return any(token in lower for token in ["paper", "article", "study", "survey", "report", "model", "method", "approach", "benchmark", "system"])
+
+
+def fetch_by_title(title: str, max_results: int = 5) -> list[dict]:
+    """Try to resolve a paper title directly, preferring exact or near-exact matches."""
+    query = (title or "").strip()
+    if not query:
+        return []
+
+    logger.info("Trying title-based lookup for '%s'", query)
+
+    results: list[dict] = []
+
+    # Semantic Scholar title search
+    url = "https://api.semanticscholar.org/graph/v1/paper/search"
+    params = {
+        "query": f'"{query}"',
+        "limit": max_results,
+        "fields": "title,abstract,authors,year,citationCount,externalIds",
+    }
+    try:
+        with httpx.Client(timeout=15) as client:
+            r = client.get(url, params=params)
+            r.raise_for_status()
+            data = r.json()
+    except Exception as exc:
+        logger.warning("Semantic Scholar title lookup failed: %s", exc)
+        data = {}
+
+    for paper in data.get("data", []):
+        paper_title = paper.get("title", "")
+        similarity = _title_similarity(query, paper_title)
+        if similarity < 0.35 and not _normalize_text(query) in _normalize_text(paper_title):
+            continue
+        results.append(_doc(
+            doc_id=paper.get("paperId", ""),
+            title=paper_title,
+            abstract=paper.get("abstract", ""),
+            authors=[a["name"] for a in paper.get("authors", [])],
+            source="semantic_scholar_title",
+            url=f"https://semanticscholar.org/paper/{paper.get('paperId', '')}",
+            published_date=str(paper.get("year", "")),
+            citations=paper.get("citationCount", 0),
+        ))
+
+    if results:
+        results.sort(key=lambda x: (-(x.get("citations") or 0), x.get("title", "")))
+        return results[:max_results]
+
+    # Fallback: arXiv title search
+    try:
+        client = arxiv.Client(delay_seconds=2)
+        search = arxiv.Search(query=f'ti:"{query}"', max_results=max_results)
+        arxiv_results = []
+        for r in client.results(search):
+            arxiv_results.append(_doc(
+                doc_id=r.entry_id,
+                title=r.title,
+                abstract=r.summary,
+                authors=[a.name for a in r.authors],
+                source="arxiv_title",
+                url=r.entry_id,
+                published_date=r.published.isoformat() if r.published else "",
+            ))
+        if arxiv_results:
+            arxiv_results.sort(key=lambda x: x.get("title", ""))
+            return arxiv_results[:max_results]
+    except Exception as exc:
+        logger.warning("arXiv title lookup failed: %s", exc)
+
+    return []
+
+
 # ── Fetch by citation count via Semantic Scholar ──────────────────────────────
 
 def fetch_by_citations(topic: str, max_results: int = 10) -> list[dict]:
@@ -279,18 +376,49 @@ def fetch_rss(feed_urls: list[str] | None = None, max_per_feed: int = 10) -> lis
 
 # ── Main entry point ──────────────────────────────────────────────────────────
 _cache: dict[str, list[dict]] = {}
+
+TOPIC_ALIASES = {
+    "retrieval augmented generation": "rag",
+    "retrieval-augmented generation": "rag",
+    "large language model": "llm",
+    "large language models": "llm",
+    "transformers": "transformer",
+    "knowledge graph": "knowledge graph",
+    "graph rag": "knowledge graph",
+    "mixture of experts": "mixture of experts",
+    "reinforcement learning": "reinforcement learning",
+    "convolutional neural network": "cnn",
+    "recurrent neural network": "rnn",
+    "fine tuning": "fine tuning",
+    "multimodal": "multimodal",
+}
+
+
 def fetch_foundational(topic: str, max_results: int = 10) -> list[dict]:
-    cache_key = f"{topic.lower().strip()}:{max_results}"
+    cache_key = f"{(topic or '').strip().lower()}:{max_results}"
     if cache_key in _cache:
         logger.info("Cache hit for '%s'", topic)
         return _cache[cache_key]
 
-    topic_clean = topic.lower().strip()
+    original_topic = (topic or "").strip()
+    topic_clean = original_topic.lower().strip()
     results: list[dict] = []
 
-    for key in FOUNDATIONAL_PAPERS:
+    if _looks_like_paper_title(original_topic):
+        logger.info("Treating '%s' as a paper title", original_topic)
+        results = fetch_by_title(original_topic, max_results)
+        if results:
+            _cache[cache_key] = results
+            return results
+
+    alias_key = TOPIC_ALIASES.get(topic_clean)
+    for key in list(FOUNDATIONAL_PAPERS.keys()):
+        if alias_key and key == alias_key:
+            logger.info("Using curated paper list for concept: '%s'", topic_clean)
+            results = fetch_by_arxiv_ids(FOUNDATIONAL_PAPERS[key])
+            break
         if key in topic_clean or topic_clean in key:
-            logger.info("Using curated paper list for: '%s'", topic_clean)
+            logger.info("Using curated paper list for concept: '%s'", topic_clean)
             results = fetch_by_arxiv_ids(FOUNDATIONAL_PAPERS[key])
             break
 
@@ -300,5 +428,5 @@ def fetch_foundational(topic: str, max_results: int = 10) -> list[dict]:
     if not results:
         results = fetch_arxiv(topic_clean, max_results)
 
-    _cache[cache_key] = results  # always written
+    _cache[cache_key] = results
     return results

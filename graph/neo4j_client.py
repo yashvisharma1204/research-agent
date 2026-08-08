@@ -42,8 +42,10 @@ def bootstrap_schema(driver: Driver) -> None:
             try:
                 session.run(stmt)
             except Exception as exc:
-                # Constraint may already exist — log and continue
-                logger.debug("Schema statement skipped (%s): %s", exc, stmt[:60])
+                if "VECTOR INDEX" in stmt:
+                    logger.warning("Optional vector index statement skipped: %s", exc)
+                else:
+                    logger.debug("Schema statement skipped (%s): %s", exc, stmt[:60])
     logger.info("Neo4j schema bootstrapped")
 
 

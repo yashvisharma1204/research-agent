@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import google.generativeai as genai
@@ -27,9 +27,33 @@ from ingestion.extractors import extract_triples
 from ingestion.fetchers import fetch_foundational
 from rag.retriever import Retriever
 from rag.synthesiser import Synthesiser
+import os
+import secrets
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+security = HTTPBasic()
+
+def verify_yashvi(credentials: HTTPBasicCredentials = Depends(security)):
+    """Verifies that the username is 'Yashvi' and password matches INGESTION_PASSWORD."""
+    current_username_bytes = credentials.username.encode("utf8")
+    correct_username_bytes = b"Yashvi"
+    
+    current_password_bytes = credentials.password.encode("utf8")
+    correct_password_bytes = os.getenv("INGESTION_PASSWORD", "fallback_secret_key").encode("utf8")
+    
+    is_correct_username = secrets.compare_digest(current_username_bytes, correct_username_bytes)
+    is_correct_password = secrets.compare_digest(current_password_bytes, correct_password_bytes)
+    
+    if not (is_correct_username and is_correct_password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Access restricted. Only Yashvi can perform data ingestion.",
+            headers={"WWW-Authenticate": "Basic"},
+        )
+    return credentials.username
 
 # ── App state ─────────────────────────────────────────────────────────────────
 
@@ -170,8 +194,7 @@ async def query(req: QueryRequest):
 
     return response
 
-
-@app.post("/ingest/arxiv", response_model=IngestResponse)
+@app.post("/ingest/arxiv", response_model=IngestResponse, dependencies=[Depends(verify_yashvi)])
 async def ingest_arxiv_endpoint(req: IngestURLRequest):
     if not merger or not retriever:
         raise HTTPException(503, "Agent not initialised")
@@ -206,7 +229,7 @@ async def ingest_arxiv_endpoint(req: IngestURLRequest):
     )
 
 
-@app.post("/ingest/text", response_model=IngestResponse)
+@app.post("/ingest/text", response_model=IngestResponse, dependencies=[Depends(verify_yashvi)])
 async def ingest_text_endpoint(req: IngestTextRequest):
     if not merger or not retriever:
         raise HTTPException(503, "Agent not initialised")
