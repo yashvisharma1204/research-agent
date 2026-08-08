@@ -1,6 +1,3 @@
-
-<div align="center">
-
 # Self-Evolving Research Agent
 
 [![FastAPI](https://img.shields.io/badge/Backend-FastAPI-009688?style=flat-square&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
@@ -9,235 +6,405 @@
 [![Gemini](https://img.shields.io/badge/LLM-Gemini_2.0_Flash-228B22?style=flat-square&logo=google&logoColor=white)](https://deepmind.google/technologies/gemini/)
 [![ONNX](https://img.shields.io/badge/Inference-ONNX_Runtime-005CBB?style=flat-square&logo=onnx&logoColor=white)](https://onnxruntime.ai/)
 
-<img width="812" height="541" alt="Self Evolving Research Agent" src="https://github.com/user-attachments/assets/ce20ad31-7171-4716-ba50-3a07ab22df79" />
-
-*A continuous-learning hybrid RAG system and knowledge graph orchestrator.*
-
-</div>
-
-**[Home](#)** | [Usage](USAGE.md) | [Architecture](ARCHITECTURE.md) | [Contributing]()
+![Self Evolving Research Agent](https://github.com/user-attachments/assets/ce20ad31-7171-4716-ba50-3a07ab22df79)
 
 ---
 
-## 📑 Table of Contents
-1. [System Overview](#1-system-overview)
-2. [Architectural Deep Dive](#2-architectural-deep-dive)
-3. [Graph Database Schema](#3-graph-database-schema)
-4. [Comprehensive API Reference](#4-comprehensive-api-reference)
-5. [Frontend Engineering](#5-frontend-engineering)
-6. [Local Setup & Deployment](#6-local-setup--deployment)
+## Executive Summary
+
+The **Self-Evolving Research Agent (Research Workbench)** is a production-grade, continuous-learning hybrid Retrieval-Augmented Generation (RAG) platform. Traditional vector-only RAG pipelines suffer from context dilution, a lack of deterministic lineage, and an inability to perform multi-hop reasoning over connected domain concepts.
+
+This platform bridges dense semantic vector retrieval with deterministic property graph topologies. It operates as an autonomous backend that ingests unstructured scientific literature (via arXiv, RSS feeds, or raw payloads), parses semantic relationships into subject-predicate-object knowledge triples, builds an interconnected **Neo4j Knowledge Graph**, indexes dense embeddings via **FAISS**, and coordinates synthesis through **Google Gemini 2.0 Flash**.
 
 ---
 
-## 1. System Overview
+## Theoretical Foundations & System Philosophy
 
-Most Retrieval-Augmented Generation (RAG) pipelines operate on static, point-in-time document embeddings, limiting their ability to synthesize complex, multi-hop scientific relationships. 
-
-This project implements a **continuous-learning backend**. It leverages a FastAPI orchestrator to fetch external literature (e.g., arXiv papers on topics like "Model Distillation BERT"), parses the unstructured text into semantic triples, and writes them to a live Neo4j Knowledge Graph. When queried, it utilizes a hybrid routing strategy—combining vector similarity with deterministic Cypher traversals—to feed highly contextualized sub-graphs into Google Gemini for final synthesis.
-
----
-
-## 2. Architectural Deep Dive
-
-The system is strictly decoupled into ingestion, storage, retrieval, and presentation layers.
-
-```text
- ┌───────────────────────┐       ┌────────────────────────┐
- │   External Sources    │       │   Extraction Pipeline  │
- │  (arXiv, RSS, Text)   │ ────> │ (NLP Triple Parsing)   │
- └───────────────────────┘       └───────────┬────────────┘
-                                             │
- ┌───────────────────────┐                   ▼
- │  Frontend Client UI   │       ┌────────────────────────┐
- │ (D3.js Force Graph,   │ <──── │   FastAPI Orchestrator │
- │  Bento Dashboard)     │ ────> │   (Query & Synthesis)  │
- └───────────────────────┘       └───────────┬────────────┘
-                                             │
- ┌───────────────────────┐                   ▼
- │   Generative AI       │       ┌────────────────────────┐
- │ (Google Gemini LLM)   │ <───> │  Hybrid Storage Layer  │
- └───────────────────────┘       │ (Neo4j Graph & FAISS)  │
-                                 └────────────────────────┘
 
 ```
 
-### 2.1 The Ingestion & Extraction Pipeline
+```
+                           ┌─────────────────────────┐
+                           │  Scientific Literature  │
+                           │  (arXiv, RSS, Payloads) │
+                           └────────────┬────────────┘
+                                        │
+                                        ▼
+                           ┌─────────────────────────┐
+                           │   FastAPI Orchestrator  │
+                           └──────┬───────────┬──────┘
+                                  │           │
+       ┌──────────────────────────┘           └──────────────────────────┐
+       ▼                                                                 ▼
 
-The backend exposes dedicated ingestion endpoints that trigger background or synchronous processing:
+```
 
-* **arXiv Fetcher:** Connects to external APIs to pull paper metadata and abstracts based on keyword queries and max result limits.
-* **Semantic Extraction:** Unstructured abstracts are passed to NLP extractors (`extract_triples`), identifying canonical entities (Subject, Object) and their relationships (Predicate) along with confidence scores.
+┌───────────────────────────────────────┐                         ┌──────────────────────┐
+│       Knowledge Graph Engine          │                         │ Dense Vector Engine  │
+│  (Neo4j Deterministic Triples)        │                         │  (FAISS ONNX Embeds) │
+└──────────────────┬────────────────────┘                         └──────────┬───────────┘
+│                                                         │
+│          ┌───────────────────────────────────┐          │
+└─────────►│ Hybrid Traversal & Context Fusion │◄─────────┘
+└─────────────────┬─────────────────┘
+│
+▼
+┌───────────────────────────────────┐
+│    Generative Synthesis Engine    │
+│      (Google Gemini 2.0 Flash)    │
+└───────────────────────────────────┘
 
-### 2.2 Hybrid Storage Engine
+```
 
-Data is persisted across two specialized systems concurrently:
+### 1. Vector Search vs. Graph Traversal
+Standard vector retrieval translates text blocks into embeddings $\mathbf{v} \in \mathbb{R}^d$ and performs nearest-neighbor search based on cosine similarity:
 
-* **Neo4j Graph:** Entities and relationships are merged idempotently via the `KGMerger`. Full paper text is stored as a node property (`p.text`) to retain source fidelity.
-* **Vector Index:** Chunks of the abstract are embedded and stored (e.g., via FAISS) for dense semantic retrieval.
+$$\text{Sim}(\mathbf{q}, \mathbf{d}) = \frac{\mathbf{q} \cdot \mathbf{d}}{\|\mathbf{q}\| \|\mathbf{d}\|}$$
 
-### 2.3 Synthesis & Smart Caching Layer
+While effective for unstructured semantic matching, vector similarity fails to represent **explicit, multi-step relational structures** (e.g., *Model A* `USES_METHOD` *Optimization B*, which `IMPROVES` *Metric C*).
 
-* **Hybrid RAG:** The `/query` endpoint dynamically flags routes as `HYBRID`, `CYPHER`, or `VECTOR` based on the retrieval strategy.
-* **Read-Through Summary Cache:** To minimize LLM token costs and latency, the system queries Neo4j first when a paper summary is requested. If a summary does not exist, Gemini generates a concise 3-bullet point scientific summary, which is then permanently saved to the graph node (`SET p.summary = $summary`).
+The Research Workbench implements a dual retrieval model:
+* **Probabilistic Semantic Search (FAISS):** Localizes relevant document chunks across high-dimensional semantic spaces.
+* **Deterministic Graph Traversal (Neo4j):** Executes variable-length Cypher path traversals to collect $n$-hop relation subgraphs surrounding candidate nodes.
+
+### 2. Solving Catastrophic Forgetting & Static Indices
+Static vector indices cannot natively adapt when new information contradicts or extends prior documents without complete re-indexing. By decoupling entity persistence from raw text, our architecture dynamically updates node attributes (such as `mention_count` and node degree) and merges relation edges idempotently.
+
+### 3. Open Information Extraction (OpenIE) Formulation
+Unstructured document text is converted into set representations of relational triples:
+
+$$\mathcal{T} = \{ (s, p, o) \mid s \in \mathcal{E}, o \in \mathcal{E}, p \in \mathcal{R} \}$$
+
+Where $\mathcal{E}$ represents the set of extracted entities and $\mathcal{R}$ represents the set of directed predicates. Each triple is assigned an extraction confidence score $c \in [0.0, 1.0]$.
 
 ---
 
-## 3. Graph Database Schema
+## System Architecture & Micro-Layers
 
-The graph ontology is engineered to map the relationships inherent in scientific and technical literature.
+The system is decoupled into four functional execution layers:
 
-### 🟢 Entity Nodes (`:Entity`)
 
-Entities are dynamically styled in the UI using a hushed pastel palette based on their ontological category.
+```
 
-* **`name`** *(String)*: The canonical identifier or title.
-* **`type`** *(String)*: Categorical label mapped to UI clusters (*Paper*, *Method*, *Model*, *Metric*, *Author*, *Concept*, *Organisation*).
-* **`mention_count`** *(Integer)*: Frequency accumulator dictating the physical radius of the node in the force simulation.
-* **`text`** *(String)*: The raw document payload or abstract.
-* **`summary`** *(String)*: The cached 3-bullet point output generated by the Gemini model.
+┌──────────────────────────────────────────────────────────────────────────────────┐
+│                                 FASTAPI ORCHESTRATOR                             │
+│  - Async I/O Event Loop        - Connection Pooling       - Cache-Aside Manager │
+└──────────┬───────────────────────────────┬───────────────────────────────┬───────┘
+│                               │                               │
+▼                               ▼                               ▼
+┌─────────────────────┐        ┌───────────────────────┐       ┌───────────────────┐
+│ INGESTION & EXTRACTION │        │ HYBRID STORAGE ENGINE │       │ GENERATIVE AI LAYER│
+│ - arXiv / RSS Fetch │        │ - Neo4j (Graph DB)    │       │ - Gemini 2.0 Flash│
+│ - ONNX Transformer  │        │ - FAISS (Vector DB)   │       │ - Lazy Summary    │
+│ - Triple Extraction │        │ - Idempotent KG Merger│       │ - Sub-graph Synthesis│
+└─────────────────────┘        └───────────────────────┘       └───────────────────┘
 
-### 🔗 Semantic Edges (`:RELATION`)
+```
 
-Directed edges mapping dependencies, architectures, or citations.
+### 1. The Orchestrator (FastAPI)
+Acts as the asynchronous API gateway and state machine controller.
+* **Concurrency Model:** Built on Python’s native `asyncio` event loop. Unblocking tasks (e.g., remote arXiv fetching, parallel LLM inference calls) are scheduled asynchronously.
+* **Cache-Aside / Read-Through Pattern:** Incoming requests for paper summaries query the primary Neo4j node attributes. On a cache miss, execution routes to the LLM generation layer, streams the response back to the API route, and asynchronously executes a node mutation back-write.
 
-* **`type`** *(String)*: The extracted predicate (e.g., `OPTIMIZES`, `INTRODUCES`, `USES_METHOD`).
-* **`confidence`** *(Float)*: NLP extraction certainty metric.
-* **`sources`** *(Array)*: Lineage pointers referencing originating document IDs to ensure traceability.
+### 2. Ingestion & Extraction Engine
+Executes natural language processing to extract structural graph data from raw documents.
+* **Fetchers:** Interacts with external REST/XML endpoints (arXiv API, PubMed, RSS feeds) via client session pooling.
+* **Entity Identification & Disambiguation:** Parses extracted entities into unified canonical forms, preventing duplicate nodes for terms like *"LLMs"*, *"Large Language Models"*, and *"large language model"*.
+* **Confidence Scoring:** Triples undergo threshold filtering. Extracted relationships with confidence scores below a configurable limit ($c < \tau$) are dropped prior to database insertion.
+
+### 3. Hybrid Storage Engine
+* **Neo4j Property Graph:** Maintains transactional integrity for the knowledge graph. Stores entities as nodes and predicates as directed edges. Handles real-time graph projections for visualization and multi-hop Cypher querying.
+* **FAISS Vector Store:** Operates an Inverted File with Product Quantization (`IVF-PQ`) index. Text payloads are vectorized using local ONNX Runtime transformer models, avoiding API network latency during token embedding creation.
+
+### 4. Generative AI & Synthesis Layer (Google Gemini 2.0 Flash)
+* **Structured Retrieval Context:** Merges vector search results with structural graph neighborhood sub-graphs into a unified prompt context.
+* **Lazy Evaluation Summarizer:** Generates standardized 3-bullet point scientific summaries bound by strict system instruction schemas.
 
 ---
 
-## 4. Comprehensive API Reference
+## Knowledge Graph Schema & Ontology
 
-The backend is built on **FastAPI** using Pydantic models for strict payload validation.
+The Neo4j database uses a custom scientific ontology designed to capture academic literature structure.
 
-### Document Ingestion
 
-**`POST /ingest/arxiv`**
-Fetches literature dynamically from arXiv and builds the graph.
+```
+
+```
+                       (:Entity:Paper)
+                            │
+           ┌────────────────┼────────────────┐
+           │                │                │
+  (INTRODUCES)        (USES_METHOD)     (BENCHMARKS)
+           │                │                │
+           ▼                ▼                ▼
+    (:Entity:Model)  (:Entity:Method)  (:Entity:Metric)
+
+```
+
+```
+
+### Node Constraints & Properties (`:Entity`)
+
+Nodes represent core concepts, artifacts, authors, and methodologies.
+
+| Property | Type | Indexing | Description |
+| :--- | :--- | :--- | :--- |
+| `name` | `STRING` | **Unique Constraint** | Canonical entity identifier (e.g., `"DistilBERT"`). |
+| `type` | `STRING` | Key Index | Ontological type: `Paper`, `Method`, `Model`, `Metric`, `Author`, `Concept`, `Organisation`. |
+| `mention_count` | `INTEGER` | Range Index | Frequency counter incremented on distinct paper ingestion. |
+| `text` | `STRING` | None | Raw unstructured text snippet or original abstract payload. |
+| `summary` | `STRING` | None | Cached 3-bullet markdown summary generated by Gemini. |
+| `created_at` | `ZONED DATETIME` | None | UTC timestamp of initial graph insertion. |
+
+### Edge Properties (`:RELATION`)
+
+Directed relationships connect entities via extracted predicates.
+
+| Property | Type | Description |
+| :--- | :--- | :--- |
+| `type` | `STRING` | Normalized verb phrase (e.g., `OPTIMIZES`, `INTRODUCES`, `EVALUATES_ON`). |
+| `confidence` | `FLOAT` | Extraction confidence score derived from the NLP model ($0.0 \le c \le 1.0$). |
+| `sources` | `LIST<STRING>` | Array of originating document IDs / DOIs ensuring provenance. |
+
+### Cypher Schema Definitions
+```cypher
+// Enforce canonical entity name uniqueness
+CREATE CONSTRAINT unique_entity_name IF NOT EXISTS
+FOR (e:Entity) REQUIRE e.name IS UNIQUE;
+
+// Indexes for performance optimization
+CREATE INDEX entity_type_idx IF NOT EXISTS FOR (e:Entity) ON (e.type);
+CREATE INDEX entity_mention_idx IF NOT EXISTS FOR (e:Entity) ON (e.mention_count);
+
+```
+
+---
+
+## Data Pipeline Lifecycle
+
+```
+[User / Cron Trigger] ──► POST /ingest/arxiv
+                                 │
+                                 ▼
+                    [Fetch Raw Abstract / Metadata]
+                                 │
+                                 ▼
+                     [ONNX Text Vectorization]
+                                 │
+                                 ▼
+                    [Extract Knowledge Triples]
+                                 │
+         ┌───────────────────────┴───────────────────────┐
+         ▼                                               ▼
+[Neo4j Cypher Idempotent MERGE]             [FAISS Index Vector Add]
+  - MERGE (s:Entity {name: ...})              - Compute embedding
+  - ON MATCH SET count = count + 1            - Append to index
+  - MERGE (s)-[r:RELATION]->(o)               - Save index state
+         │                                               │
+         └───────────────────────┬───────────────────────┘
+                                 │
+                                 ▼
+                    [Ready for Context Retrieval]
+                                 │
+                                 ▼
+                   GET /api/paper/summary/{title}
+                                 │
+                 ┌───────────────┴───────────────┐
+            (Cache Hit)                     (Cache Miss)
+                 │                               │
+                 ▼                               ▼
+       [Return Node Summary]            [Query Gemini 2.0 LLM]
+                                                 │
+                                                 ▼
+                                     [Write-Back to Neo4j Node]
+
+```
+
+### 1. Ingestion Phase
+
+An ingestion job is initialized via API payload or worker trigger:
+
+1. **Fetch & Normalize:** Raw text, metadata, and DOIs are retrieved.
+2. **Text Chunking & Embedding:** The payload is processed using standard sliding-window tokenization and converted into dense vectors via ONNX runtime bindings.
+3. **Extraction:** The text block is analyzed to generate candidate $(s, p, o)$ triples along with confidence metrics $c$.
+
+### 2. Graph Merge Strategy (Idempotent Cypher Mutations)
+
+To prevent network graph fragmentation and duplicate entity generation, updates are wrapped in transactional Cypher `MERGE` blocks:
+
+```cypher
+UNWIND $triples AS triple
+MERGE (s:Entity {name: triple.subject})
+  ON CREATE SET s.type = triple.subject_type, s.mention_count = 1
+  ON MATCH SET s.mention_count = s.mention_count + 1
+
+MERGE (o:Entity {name: triple.object})
+  ON CREATE SET o.type = triple.object_type, o.mention_count = 1
+  ON MATCH SET o.mention_count = o.mention_count + 1
+
+MERGE (s)-[r:RELATION {type: triple.predicate}]->(o)
+  ON CREATE SET r.confidence = triple.confidence, r.sources = [triple.source_id]
+  ON MATCH SET r.sources = apoc.coll.toSet(r.sources + triple.source_id);
+
+```
+
+---
+
+## API Reference Specification
+
+All endpoints are served via FastAPI with automatic OpenAPI documentation available at `/docs`.
+
+| Method | Endpoint | Query / Body Params | Response Type | Description |
+| --- | --- | --- | --- | --- |
+| **GET** | `/health` | None | `JSON` | Returns database pool status, vector index memory consumption, and liveness status. |
+| **GET** | `/stats` | None | `JSON` | Aggregates database state metrics (total nodes, relation count, density metrics). |
+| **POST** | `/query` | `{ "query": "string", "top_k": 5 }` | `JSON` | Performs hybrid graph-vector contextual retrieval and streams synthesized answer from Gemini. |
+| **POST** | `/ingest/arxiv` | `{ "search_query": "string", "max_results": 10 }` | `JSON` | Triggers background worker to fetch, parse, vectorize, and merge arXiv literature into graph. |
+| **POST** | `/ingest/text` | `{ "title": "string", "text": "string" }` | `JSON` | Manual ingestion payload endpoint for unindexed text, notes, or internal scientific reports. |
+| **GET** | `/graph` | `?limit=100&min_mentions=1` | `JSON` | Streams serialized node/edge datasets formatted for D3.js force-directed rendering. |
+| **GET** | `/api/paper/summary/{title}` | Path Parameter: `title` | `JSON` | Executes read-through cache lookup for paper summary; lazily invokes Gemini on cache miss. |
+| **GET** | `/api/ingestion/history` | `?page=1&limit=20` | `JSON` | Returns audit log of ingested documents, success metrics, and parsed triple counts. |
+
+### API Payload Schema Examples
+
+#### Request: `POST /query`
 
 ```json
-// Request
 {
-  "arxiv_query": "Model Distillation BERT",
-  "max_results": 5
-}
-// Response
-{
-  "documents_processed": 5,
-  "triples_extracted": 142
+  "query": "What optimization techniques are applied to DistilBERT models?",
+  "top_k": 5,
+  "enable_graph_traversal": true
 }
 
 ```
 
-**`POST /ingest/text`**
-Manually injects raw notes, research snippets, or proprietary text.
+#### Response: `POST /query`
 
 ```json
-// Request
 {
-  "title": "Quantization Study",
-  "text": "We applied INT8 quantization to...",
-  "doc_id": "optional_custom_id"
+  "query": "What optimization techniques are applied to DistilBERT models?",
+  "answer": "DistilBERT models primarily utilize Knowledge Distillation during pre-training, combined with 8-bit Quantization (OPT-Q) to reduce inference latency without significant accuracy degradation...",
+  "retrieved_nodes": [
+    { "name": "DistilBERT", "type": "Model", "mention_count": 14 },
+    { "name": "Knowledge Distillation", "type": "Method", "mention_count": 42 }
+  ],
+  "graph_paths": [
+    "(:Model {name: 'DistilBERT'})-[:USES_METHOD]->(:Method {name: 'Knowledge Distillation'})"
+  ],
+  "latency_ms": 342.1
 }
 
 ```
-
-### Retrieval & Querying
-
-**`POST /query`**
-The primary agent workspace endpoint. Returns the synthesized AI answer and optional retrieval context.
-
-```json
-// Request
-{
-  "question": "What methods are used for transformer optimization?",
-  "include_context": true
-}
-// Response
-{
-  "question": "What methods are used...",
-  "answer": "Based on the retrieved graph...",
-  "entity_seeds": ["transformer", "optimization"],
-  "graph_triple_count": 12,
-  "vector_result_count": 4,
-  "route": "HYBRID",
-  "model": "gemini-1.5-pro",
-  "context": { ... }
-}
-
-```
-
-### Graph Interactions & UI Support
-
-* **`GET /api/paper/summary/{paper_title}`**: Retrieves the cached Gemini summary for a paper, or generates and stores it if missing.
-* **`GET /stats`**: Returns database health metrics (`entities`, `relations`, `papers`, `vector_index_size`).
-* **`GET /api/ingestion/history`**: Returns the 20 most recently processed documents and their text lengths.
-* **`GET /graph?limit=250`**: Yields highly optimized node and link arrays specifically formatted for D3.js consumption.
 
 ---
 
-## 5. Frontend Engineering
+## Frontend System Engineering & Graph Physics
 
-The client (`index.html`) is a standalone, high-performance vanilla JavaScript application.
+The frontend UI (`index.html`) is designed for high-throughput visualization without the runtime overhead of complex JavaScript frameworks.
 
-* **Bento Grid Architecture:** The UI employs a CSS Grid layout (`.workbench-grid`) with modular "Bento" cards (`.bento-card`) for statistics, ingestion forms, and chat streams, styled with a hushed light palette (`#fafafa` backgrounds, `#18181b` text).
-* **D3.js Force Simulation:** The canvas utilizes `d3-force` with multiple forces acting simultaneously:
-* `forceManyBody()` ensures nodes repel each other to prevent clustering.
-* Radial positioning forces nodes toward category-specific gravity centers.
-* `getNodeRadius` dynamically scales node sizes based on `mention_count`.
+```
+┌────────────────────────────────────────────────────────────────────────┐
+│                          BENTO UI CONTAINER                            │
+│ ┌──────────────────────┐ ┌───────────────────────────────────────────┐ │
+│ │ Control & Ingestion  │ │       D3.js Force Simulation Canvas       │ │
+│ │ - Ingest Forms       │ │  - Kinetic Physics Engine (d3-force)      │ │
+│ │ - Telemetry Cards    │ │  - Dynamic Node Radii (f(mention_count))  │ │
+│ │ - Chat Interface     │ │  - Gravity Centers / Radial Clustering    │ │
+│ └──────────────────────┘ └───────────────────────────────────────────┘ │
+└────────────────────────────────────────────────────────────────────────┘
+
+```
+
+### 1. Bento UI Architecture
+
+Structured using CSS Grid (`.workbench-grid`) to isolate visualization components:
+
+* **Hushed Color Palette:** High-contrast neutral tones (`#F8F9FA`, `#1E293B`) reduce visual fatigue during graph analysis.
+* **Responsive Layout:** Adjusts component density based on view size while maintaining visual hierarchy.
+
+### 2. D3.js Force Simulation Dynamics
+
+The visualization canvas uses `d3-force` to map graph database nodes to a 2D physics engine:
+
+* **Node Repulsion (`forceManyBody`):** Applied with a negative strength scalar to prevent node overlap:
+$$F_{\text{repulsion}} = \frac{-\gamma}{d^2}$$
 
 
-* **Interactive Inspector Drawer:** Clicking a node halts the simulation slightly and slides open `.inspector-drawer`, revealing the AI summary, entity badges, and external Scholar/arXiv links.
+* **Radial Categorical Gravity (`forceRadial`):** Pulls nodes toward distinct concentric radius bands based on their ontological `type`:
+$$F_{\text{radial}} = \alpha \cdot (r_{\text{target}} - r_{\text{current}})$$
+
+
+* **Dynamic Node Radii:** Node size scales relative to its structural importance using logarithmically bucketed degree frequencies:
+$$R(n) = R_{\text{base}} + k \cdot \log(1 + \text{mention\_count}(n))$$
+
+
+* **Ontological Palette Mapping:**
+* `Paper` $\rightarrow$ Deep Indigo (`#4F46E5`)
+* `Method` $\rightarrow$ Mint Green (`#10B981`)
+* `Model` $\rightarrow$ Crimson Red (`#EF4444`)
+* `Metric` $\rightarrow$ Amber Yellow (`#F59E0B`)
+
+
+
+### 3. Inspector Drawer Mechanics
+
+Clicking a node halts the local simulation execution loop to release CPU resources. It triggers a slide-out drawer (`.inspector-drawer`) that retrieves cached Gemini summaries from `/api/paper/summary/{title}` and presents extracted relation metrics.
 
 ---
 
-## 6. Local Setup & Deployment
+## Environment Configuration & Setup
 
-### Prerequisites
+### Environment Variables (`.env`)
 
-* Python 3.10+
-* Neo4j Database (Local Desktop or AuraDB cloud instance)
-* Google Gemini API Key
-
-### Installation
-
-1. **Clone the Repository**
 ```bash
-git clone [https://github.com/your-username/research-workbench.git](https://github.com/your-username/research-workbench.git)
-cd research-workbench
+# Server Configuration
+HOST=0.0.0.0
+PORT=8000
+WORKERS=4
 
-```
-
-
-2. **Virtual Environment & Dependencies**
-```bash
-python -m venv venv
-source venv/bin/activate  # On Windows use `venv\Scripts\activate`
-pip install fastapi uvicorn pydantic google-generativeai neo4j sentence-transformers tenacity httpx
-
-```
-
-
-3. **Environment Configuration**
-Create a `config.py` or `.env` file in the root directory:
-```env
-GEMINI_API_KEY=your_gemini_api_key
+# Neo4j Database Configuration
 NEO4J_URI=bolt://localhost:7687
 NEO4J_USER=neo4j
-NEO4J_PASSWORD=your_secure_password
-LLM_MODEL=gemini-1.5-pro
+NEO4J_PASSWORD=YourSecurePassword
+
+# Google Gemini API
+GEMINI_API_KEY=AIzaSy...
+
+# Vector Model Configuration
+EMBEDDING_MODEL=all-MiniLM-L6-v2
+FAISS_INDEX_PATH=./data/faiss_index.bin
 
 ```
 
+### Local Installation & Execution
 
-4. **Launch the FastAPI Server**
 ```bash
-uvicorn api.main:app --reload --port 8000
+# 1. Clone Repository
+git clone [https://github.com/your-org/self-evolving-research-agent.git](https://github.com/your-org/self-evolving-research-agent.git)
+cd self-evolving-research-agent
+
+# 2. Setup Virtual Environment
+python3 -m venv venv
+source venv/bin/activate
+
+# 3. Install Dependencies
+pip install --upgrade pip
+pip install -r requirements.txt
+
+# 4. Start Neo4j Database Instance via Docker
+docker run -d \
+  --name research-agent-neo4j \
+  -p 7474:7474 -p 7687:7687 \
+  -e NEO4J_AUTH=neo4j/YourSecurePassword \
+  neo4j:5.12-community
+
+# 5. Launch FastAPI Backend Service
+uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
 ```
 
+---
 
-5. **Launch the UI**
-Open `index.html` in any modern web browser. Enter `http://localhost:8000` into the API URL input field and click **Ping** to establish the connection.
+Self-Evolving Research Agent • Built for Autonomous Scientific Knowledge Discovery
 
-
+```
