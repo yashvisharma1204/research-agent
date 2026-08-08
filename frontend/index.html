@@ -924,6 +924,7 @@ function renderGraph(nodes, links) {
     .attr('r', 1.5)
     .attr('fill', '#ffffff')
     .attr('opacity', 0.9);
+  
   // Text Label
   nodeSel.append('text')
     .attr('class', 'node-label')
@@ -931,11 +932,12 @@ function renderGraph(nodes, links) {
     .attr('text-anchor', 'middle')
     .text(d => d.name && d.name.length > 16 ? d.name.slice(0, 14) + '…' : (d.name || d.id));
 
-  // Node Click Inspector
-  nodeSel.on('click', (e, d) => {
+  // Node Click Inspector (Updated with AI Summary endpoint)
+  nodeSel.on('click', async (e, d) => {
     e.stopPropagation();
     const pastel = getPastel(d.type);
     const drawer = document.getElementById('inspectorDrawer');
+    const descEl = document.getElementById('drawerDescription');
     
     document.getElementById('drawerTitle').textContent = d.name || d.id;
     document.getElementById('drawerBadge').textContent = d.type || 'Entity';
@@ -944,13 +946,31 @@ function renderGraph(nodes, links) {
     document.getElementById('drawerBadge').style.border = `1px solid ${pastel.border}`;
     
     document.getElementById('drawerMentions').textContent = `${d.mention_count || 1} explicit graph reference(s)`;
-    document.getElementById('drawerDescription').textContent = d.summary || d.abstract || `Connected ${d.type || 'entity'} extracted inside the knowledge graph network.`;
+
+    // AI Summary Integration for Paper nodes
+    if (d.type === 'Paper') {
+      descEl.innerHTML = '<span style="color: var(--primary-accent); font-weight: 600;">✨ Generating AI summary with Gemini...</span>';
+      
+      try {
+        const res = await fetch(BASE() + '/api/paper/summary/' + encodeURIComponent(d.name || d.id));
+        if (res.ok) {
+          const data = await res.json();
+          descEl.innerHTML = data.summary || data.error || 'No summary generated.';
+        } else {
+          descEl.textContent = 'Failed to fetch AI summary.';
+        }
+      } catch (err) {
+        descEl.textContent = d.summary || d.abstract || 'Error generating summary.';
+      }
+    } else {
+      descEl.textContent = d.summary || d.abstract || `Connected ${d.type || 'entity'} extracted inside the knowledge graph network.`;
+    }
 
     const linkContainer = document.getElementById('drawerExternalLinkContainer');
     const linkBtn = document.getElementById('drawerExternalLink');
     if (d.url || d.arxiv_id || d.type === 'Paper') {
       linkContainer.style.display = 'block';
-      linkBtn.href = d.url || (d.arxiv_id ? `https://arxiv.org/abs/${d.arxiv_id}` : `https://scholar.google.com/scholar?q=${encodeURIComponent(d.name)}`);
+      linkBtn.href = d.url || (d.arxiv_id ? `https://arxiv.org/abs/${d.arxiv_id}` : `https://scholar.google.com/scholar?q=${encodeURIComponent(d.name || d.id)}`);
       linkBtn.textContent = d.arxiv_id ? 'View arXiv Paper ↗' : 'Search Scholar ↗';
     } else {
       linkContainer.style.display = 'none';

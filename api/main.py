@@ -268,7 +268,7 @@ async def get_paper_summary(paper_title: str):
     
     return {
         "title": paper_title,
-        "real_summary": summary,
+        "summary": summary,  # Changed from real_summary to summary
         "source_text_snippet": paper_text[:400] + "..."
     }
 
