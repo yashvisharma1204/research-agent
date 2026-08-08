@@ -1,6 +1,6 @@
 <div align="center">
 
-# Self Evolving Research Agent
+# Self-Evolving Research Agent
 
 [![FastAPI](https://img.shields.io/badge/Backend-FastAPI-009688?style=flat-square&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![Neo4j](https://img.shields.io/badge/Database-Neo4j_Aura-008CC1?style=flat-square&logo=neo4j&logoColor=white)](https://neo4j.com/)
@@ -14,15 +14,32 @@
 
 </div>
 
-**[Home](#)** | [Usage](USAGE.md) | [Contributing]()
+**[Home](#)** | [Usage](USAGE.md) | [Architecture](ARCHITECTURE.md) | [Contributing]()
 
 ---
 
-Most RAG systems are frozen in time — you feed them documents once and they stay dumb. This one doesn't. Every few hours it reaches out to arXiv and RSS feeds, pulls the latest papers on topics you care about, extracts structured knowledge triples, and weaves them into a live Neo4j graph. Ask it a question tomorrow and it knows things it didn't know today.
+Most Retrieval-Augmented Generation (RAG) systems operate on static, point-in-time document embeddings. The **Self-Evolving Research Agent** implements a continuous, hybrid RAG architecture. By orchestrating automated ingestion pipelines, structured semantic extraction, and a dynamic graph database, the system continuously weaves incoming unstructured data into a live **Neo4j** knowledge graph. The result is an intelligent backend capable of deterministic multi-hop reasoning and vector similarity search.
 
 ---
 
-<div align="center">
-<sub>Built with Gemini · Neo4j · FAISS · FastAPI · Prefect</sub>
-</div>
+## 📐 System Architecture & Data Flow
 
+The system is decoupled into three primary execution layers: the **Ingestion & Extraction Pipeline**, the **Hybrid Storage Engine**, and the **Synthesis & Serving API**.
+
+```text
+ ┌───────────────────────┐       ┌────────────────────────┐
+ │   External Sources    │       │   Extraction Pipeline  │
+ │  (arXiv, RSS, Text)   │ ────> │ (NLP Triple Parsing)   │
+ └───────────────────────┘       └───────────┬────────────┘
+                                             │
+ ┌───────────────────────┐                   ▼
+ │  Frontend Client UI   │       ┌────────────────────────┐
+ │ (D3.js Force Graph,   │ <──── │   FastAPI Orchestrator │
+ │  Bento Dashboard)     │ ────> │   (Query & Synthesis)  │
+ └───────────────────────┘       └───────────┬────────────┘
+                                             │
+ ┌───────────────────────┐                   ▼
+ │   Generative AI       │       ┌────────────────────────┐
+ │ (Google Gemini LLM)   │ <───> │  Hybrid Storage Layer  │
+ └───────────────────────┘       │ (Neo4j Graph & FAISS)  │
+                                 └────────────────────────┘
