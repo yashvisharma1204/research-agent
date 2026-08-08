@@ -1,3 +1,5 @@
+<div align="center">
+
 # Self-Evolving Research Agent
 
 [![FastAPI](https://img.shields.io/badge/Backend-FastAPI-009688?style=flat-square&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
@@ -6,7 +8,11 @@
 [![Gemini](https://img.shields.io/badge/LLM-Gemini_2.0_Flash-228B22?style=flat-square&logo=google&logoColor=white)](https://deepmind.google/technologies/gemini/)
 [![ONNX](https://img.shields.io/badge/Inference-ONNX_Runtime-005CBB?style=flat-square&logo=onnx&logoColor=white)](https://onnxruntime.ai/)
 
-![Self Evolving Research Agent](https://github.com/user-attachments/assets/ce20ad31-7171-4716-ba50-3a07ab22df79)
+<img width="812" height="541" alt="Self Evolving Research Agent" src="https://github.com/user-attachments/assets/ce20ad31-7171-4716-ba50-3a07ab22df79" />
+
+</div>
+
+
 
 ---
 
@@ -35,22 +41,20 @@ This platform bridges dense semantic vector retrieval with deterministic propert
        ┌──────────────────────────┘           └──────────────────────────┐
        ▼                                                                 ▼
 
-```
-
 ┌───────────────────────────────────────┐                         ┌──────────────────────┐
 │       Knowledge Graph Engine          │                         │ Dense Vector Engine  │
 │  (Neo4j Deterministic Triples)        │                         │  (FAISS ONNX Embeds) │
 └──────────────────┬────────────────────┘                         └──────────┬───────────┘
-│                                                         │
-│          ┌───────────────────────────────────┐          │
-└─────────►│ Hybrid Traversal & Context Fusion │◄─────────┘
-└─────────────────┬─────────────────┘
-│
-▼
-┌───────────────────────────────────┐
-│    Generative Synthesis Engine    │
-│      (Google Gemini 2.0 Flash)    │
-└───────────────────────────────────┘
+                   │                                                         │
+                   │          ┌───────────────────────────────────┐          │
+                   └─────────►│ Hybrid Traversal & Context Fusion │◄─────────┘
+                              └─────────────────┬─────────────────┘
+                                                │
+                                                ▼
+                              ┌───────────────────────────────────┐
+                              │    Generative Synthesis Engine    │
+                              │      (Google Gemini 2.0 Flash)    │
+                              └───────────────────────────────────┘
 
 ```
 
@@ -126,8 +130,6 @@ The Neo4j database uses a custom scientific ontology designed to capture academi
 
 
 ```
-
-```
                        (:Entity:Paper)
                             │
            ┌────────────────┼────────────────┐
@@ -136,8 +138,6 @@ The Neo4j database uses a custom scientific ontology designed to capture academi
            │                │                │
            ▼                ▼                ▼
     (:Entity:Model)  (:Entity:Method)  (:Entity:Metric)
-
-```
 
 ```
 
@@ -300,18 +300,7 @@ All endpoints are served via FastAPI with automatic OpenAPI documentation availa
 
 The frontend UI (`index.html`) is designed for high-throughput visualization without the runtime overhead of complex JavaScript frameworks.
 
-```
-┌────────────────────────────────────────────────────────────────────────┐
-│                          BENTO UI CONTAINER                            │
-│ ┌──────────────────────┐ ┌───────────────────────────────────────────┐ │
-│ │ Control & Ingestion  │ │       D3.js Force Simulation Canvas       │ │
-│ │ - Ingest Forms       │ │  - Kinetic Physics Engine (d3-force)      │ │
-│ │ - Telemetry Cards    │ │  - Dynamic Node Radii (f(mention_count))  │ │
-│ │ - Chat Interface     │ │  - Gravity Centers / Radial Clustering    │ │
-│ └──────────────────────┘ └───────────────────────────────────────────┘ │
-└────────────────────────────────────────────────────────────────────────┘
-
-```
+<img width="1512" height="864" alt="Screenshot 2026-08-08 at 3 48 47 PM" src="https://github.com/user-attachments/assets/010ca1e5-2fde-4621-b89f-30632fb20675" />
 
 ### 1. Bento UI Architecture
 
@@ -333,7 +322,7 @@ $$F_{\text{radial}} = \alpha \cdot (r_{\text{target}} - r_{\text{current}})$$
 
 
 * **Dynamic Node Radii:** Node size scales relative to its structural importance using logarithmically bucketed degree frequencies:
-$$R(n) = R_{\text{base}} + k \cdot \log(1 + \text{mention\_count}(n))$$
+$$R(n) = R_{\text{base}} + k \cdot \log(1 + \text{mentionCount}(n))$$
 
 
 * **Ontological Palette Mapping:**
@@ -402,5 +391,6 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
 ---
-
+<div align="center">
 Self-Evolving Research Agent • Built for Autonomous Scientific Knowledge Discovery
+</div>
