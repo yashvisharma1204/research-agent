@@ -115,9 +115,11 @@ class GraphResponse(BaseModel):
 # ── Helper Function: Generate Scientific Summary ──────────────────────────────
 
 def generate_paper_summary(paper_title: str, text: str, relations: list) -> str:
-    """Uses Gemini to generate a 3-bullet scientific summary using stored text and graph links."""
-    prompt = f"""Provide a concise 3-bullet point scientific summary of this paper based on its abstract text and connected knowledge graph relations:
+    """Uses Gemini to generate a strict 3-bullet point scientific summary with no preamble."""
+    prompt = f"""Provide a concise 3-bullet point scientific summary of this paper based on its abstract text and connected knowledge graph relations. 
     
+    CRITICAL INSTRUCTION: Output ONLY the 3 bullet points. Do not include any conversational intro, title, or outro text.
+
     Paper Title: {paper_title}
     Abstract Text: {text[:3000]}
     Connected Graph Relations: {relations[:15]}
@@ -127,8 +129,7 @@ def generate_paper_summary(paper_title: str, text: str, relations: list) -> str:
     gemini_model = genai.GenerativeModel(model_name=cfg.LLM_MODEL)
     
     response = gemini_model.generate_content(prompt)
-    return response.text
-
+    return response.text.strip()
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
@@ -242,16 +243,16 @@ async def stats():
 
 @app.get("/api/paper/summary/{paper_title}")
 async def get_paper_summary(paper_title: str):
-    """Fetches the real abstract and triples from Neo4j and returns a synthesized summary."""
-    cypher = """
+    """Fetches or generates a stored summary, saving it to Neo4j on the first request."""
+    cypher_fetch = """
     MATCH (p:Entity {name: $title})
     OPTIONAL MATCH (p)-[r]->(o:Entity)
-    RETURN p.text AS text, collect({pred: type(r), obj: o.name}) AS relations
+    RETURN p.text AS text, p.summary AS summary, collect({pred: type(r), obj: o.name}) AS relations
     """
     
     try:
         with get_driver().session() as session:
-            record = session.run(cypher, title=paper_title).single()
+            record = session.run(cypher_fetch, title=paper_title).single()
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Database query error: {str(e)}")
         
@@ -259,19 +260,37 @@ async def get_paper_summary(paper_title: str):
         raise HTTPException(status_code=404, detail="Paper text or abstract not found in graph storage.")
         
     paper_text = record["text"]
-    relations = record["relations"]
+    stored_summary = record.get("summary")
     
+    # Return cached summary if it already exists in Neo4j
+    if stored_summary:
+        return {
+            "title": paper_title,
+            "summary": stored_summary,
+            "source_text_snippet": paper_text[:400] + "..."
+        }
+    
+    # Otherwise, generate it via Gemini
+    relations = record["relations"]
     try:
         summary = generate_paper_summary(paper_title, paper_text, relations)
+        
+        # Store the generated summary directly back into the Neo4j Paper node
+        cypher_save = """
+        MATCH (p:Entity {name: $title})
+        SET p.summary = $summary
+        """
+        with get_driver().session() as session:
+            session.run(cypher_save, title=paper_title, summary=summary)
+            
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Summary generation error: {str(e)}")
     
     return {
         "title": paper_title,
-        "summary": summary,  # Changed from real_summary to summary
+        "summary": summary,
         "source_text_snippet": paper_text[:400] + "..."
     }
-
 
 @app.get("/api/ingestion/history")
 async def get_ingestion_history():
