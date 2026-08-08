@@ -1,6 +1,4 @@
-Here is the entire detailed README formatted inside a raw Markdown code block so you can copy and paste it directly into your `README.md` file:
 
-```markdown
 <div align="center">
 
 # Self-Evolving Research Agent
@@ -241,4 +239,4 @@ uvicorn api.main:app --reload --port 8000
 5. **Launch the UI**
 Open `index.html` in any modern web browser. Enter `http://localhost:8000` into the API URL input field and click **Ping** to establish the connection.
 
----
+
