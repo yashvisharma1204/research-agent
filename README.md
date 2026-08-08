@@ -22,8 +22,6 @@ This platform bridges dense semantic vector retrieval with deterministic propert
 
 
 ```
-
-```
                            ┌─────────────────────────┐
                            │  Scientific Literature  │
                            │  (arXiv, RSS, Payloads) │
@@ -406,5 +404,3 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ---
 
 Self-Evolving Research Agent • Built for Autonomous Scientific Knowledge Discovery
-
-```
