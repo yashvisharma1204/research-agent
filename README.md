@@ -92,14 +92,14 @@ The system is decoupled into four functional execution layers:
 │                                 FASTAPI ORCHESTRATOR                             │
 │  - Async I/O Event Loop        - Connection Pooling       - Cache-Aside Manager │
 └──────────┬───────────────────────────────┬───────────────────────────────┬───────┘
-│                               │                               │
-▼                               ▼                               ▼
-┌─────────────────────┐        ┌───────────────────────┐       ┌───────────────────┐
-│ INGESTION & EXTRACTION │        │ HYBRID STORAGE ENGINE │       │ GENERATIVE AI LAYER│
-│ - arXiv / RSS Fetch │        │ - Neo4j (Graph DB)    │       │ - Gemini 2.0 Flash│
-│ - ONNX Transformer  │        │ - FAISS (Vector DB)   │       │ - Lazy Summary    │
-│ - Triple Extraction │        │ - Idempotent KG Merger│       │ - Sub-graph Synthesis│
-└─────────────────────┘        └───────────────────────┘       └───────────────────┘
+           │                               │                               │
+           ▼                               ▼                               ▼
+┌────────────────────────┐        ┌───────────────────────┐       ┌──────────────────────┐
+│ INGESTION & EXTRACTION │        │ HYBRID STORAGE ENGINE │       │ GENERATIVE AI LAYER  │
+│ - arXiv / RSS Fetch    │        │ - Neo4j (Graph DB)    │       │ - Gemini 2.0 Flash.  │
+│ - ONNX Transformer     │        │ - FAISS (Vector DB)   │       │ - Lazy Summary       │
+│ - Triple Extraction    │        │ - Idempotent KG Merger│       │ - Sub-graph Synthesis│
+└────────────────────────┘        └───────────────────────┘       └──────────────────────┘
 
 ```
 
