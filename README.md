@@ -7,6 +7,7 @@
 [![Neo4j](https://img.shields.io/badge/Database-Neo4j_Aura-008CC1?style=flat-square&logo=neo4j&logoColor=white)](https://neo4j.com/)
 [![FAISS](https://img.shields.io/badge/Vector_Index-FAISS-7A8494?style=flat-square&logo=cpu&logoColor=white)](https://github.com/facebookresearch/faiss)
 [![Gemini](https://img.shields.io/badge/LLM-Gemini_2.0_Flash-228B22?style=flat-square&logo=google&logoColor=white)](https://deepmind.google/technologies/gemini/)
+[![ONNX](https://img.shields.io/badge/Inference-ONNX_Runtime-005CBB?style=flat-square&logo=onnx&logoColor=white)](https://onnxruntime.ai/)
 
 <img width="812" height="541" alt="Self Evolving Research Agent" src="https://github.com/user-attachments/assets/ce20ad31-7171-4716-ba50-3a07ab22df79" />
 
