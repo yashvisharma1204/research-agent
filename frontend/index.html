@@ -428,6 +428,129 @@
     padding: 12px;
     text-align: center;
   }
+
+  /* ── Ingestion Auth Modal Styling ── */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background: rgba(24, 24, 27, 0.4); /* Dark translucent tint */
+  backdrop-filter: blur(8px);       /* Background blur effect */
+  -webkit-backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  transition: opacity 0.2s ease-in-out;
+}
+
+.modal-overlay.hidden {
+  display: none !important;
+}
+
+.modal-box {
+  background: #ffffff;
+  border: 1px solid #e4e4e7;
+  border-radius: 16px;
+  padding: 28px;
+  width: 90%;
+  max-width: 380px;
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+  font-family: inherit;
+}
+
+.modal-box h3 {
+  margin: 0 0 6px 0;
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: #18181b;
+}
+
+.modal-subtext {
+  margin: 0 0 20px 0;
+  font-size: 0.85rem;
+  color: #71717a;
+  line-height: 1.4;
+}
+
+.modal-input-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.modal-input-group label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #52525b;
+}
+
+.modal-input-group input {
+  padding: 10px 14px;
+  border: 1px solid #d4d4d8;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  outline: none;
+  background: #fafafa;
+  color: #18181b;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.modal-input-group input:focus {
+  border-color: #18181b;
+  background: #ffffff;
+}
+
+.modal-error {
+  color: #ef4444;
+  font-size: 0.8rem;
+  font-weight: 500;
+  margin-bottom: 12px;
+}
+
+.modal-error.hidden {
+  display: none;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.modal-btn-primary, .modal-btn-secondary {
+  padding: 8px 16px;
+  border-radius: 8px;
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+  border: none;
+  transition: all 0.15s ease;
+}
+
+.modal-btn-primary {
+  background: #18181b;
+  color: #ffffff;
+}
+
+.modal-btn-primary:hover {
+  background: #27272a;
+}
+
+.modal-btn-secondary {
+  background: #f4f4f5;
+  color: #52525b;
+}
+
+.modal-btn-secondary:hover {
+  background: #e4e4e7;
+}
 </style>
 </head>
 <body>
@@ -581,7 +704,23 @@
       </div>
     </div>
   </div>
+  <div id="authModal" class="modal-overlay hidden">
+  <div class="modal-box">
+    <h3>Are you Yashvi?</h3>
+    <p class="modal-subtext">If you are not Yashvi, you can't ingest data into the knowledge graph.</p>
+    
+    <div class="modal-input-group">
+      <label for="authPassword">Password</label>
+      <input type="password" id="authPassword" placeholder="Enter password to confirm" onkeydown="if(event.key==='Enter') submitIngestionWithAuth()" />
+    </div>
 
+    <div id="authError" class="modal-error hidden">Incorrect password. Access denied.</div>
+
+    <div class="modal-actions">
+      <button type="button" class="modal-btn-secondary" onclick="closeAuthModal()">Cancel</button>
+      <button type="button" class="modal-btn-primary" id="authConfirmButton" onclick="submitIngestionWithAuth()">Confirm & Ingest</button>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -696,64 +835,145 @@ async function loadIngestionHistory() {
 function escapeHtml(str) {
   return String(str).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
+let pendingIngestion = {
+  endpoint: null,
+  payload: null,
+  callback: null
+};
+let authSubmitting = false;
 
+function setAuthButtonState(submitting) {
+  const btn = document.getElementById('authConfirmButton');
+  if (!btn) return;
+  btn.disabled = submitting;
+  btn.textContent = submitting ? 'Checking...' : 'Confirm & Ingest';
+}
+
+function promptYashviAuth(endpoint, payload, successCallback) {
+  pendingIngestion.endpoint = endpoint;
+  pendingIngestion.payload = payload;
+  pendingIngestion.callback = successCallback;
+
+  document.getElementById('authPassword').value = '';
+  document.getElementById('authError').classList.add('hidden');
+  setAuthButtonState(false);
+
+  document.getElementById('authModal').classList.remove('hidden');
+  setTimeout(() => document.getElementById('authPassword').focus(), 100);
+}
+
+function closeAuthModal() {
+  document.getElementById('authModal').classList.add('hidden');
+  setAuthButtonState(false);
+  pendingIngestion = { endpoint: null, payload: null, callback: null };
+  authSubmitting = false;
+}
+
+async function submitIngestionWithAuth() {
+  if (authSubmitting) return;
+
+  const password = document.getElementById('authPassword').value.trim();
+  const errorEl = document.getElementById('authError');
+  const request = pendingIngestion;
+  authSubmitting = true;
+  setAuthButtonState(true);
+
+  if (!password) {
+    errorEl.textContent = "Please enter the password.";
+    errorEl.classList.remove('hidden');
+    authSubmitting = false;
+    setAuthButtonState(false);
+    return;
+  }
+
+  if (!request?.endpoint || !request?.payload) {
+    errorEl.textContent = "No ingestion request is pending.";
+    errorEl.classList.remove('hidden');
+    authSubmitting = false;
+    setAuthButtonState(false);
+    return;
+  }
+
+  const authHeader = 'Basic ' + btoa('Yashvi:' + password);
+  const successCallback = request.callback;
+
+  try {
+    const res = await fetch(BASE() + request.endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': authHeader
+      },
+      body: JSON.stringify(request.payload)
+    });
+
+    if (res.status === 401) {
+      errorEl.textContent = "Incorrect password. Only Yashvi can ingest data.";
+      errorEl.classList.remove('hidden');
+      authSubmitting = false;
+      setAuthButtonState(false);
+      return;
+    }
+
+    if (!res.ok) {
+      throw new Error(`Ingestion failed with status ${res.status}`);
+    }
+
+    let data = null;
+    const responseText = await res.text();
+    if (responseText) {
+      try {
+        data = JSON.parse(responseText);
+      } catch (parseErr) {
+        data = { message: responseText };
+      }
+    }
+
+    closeAuthModal();
+
+    if (successCallback) {
+      successCallback(data);
+    }
+
+  } catch (err) {
+    errorEl.textContent = err.message || "An error occurred during ingestion.";
+    errorEl.classList.remove('hidden');
+  } finally {
+    authSubmitting = false;
+    setAuthButtonState(false);
+  }
+}
 async function ingestArxiv() {
   const q = document.getElementById('arxivQuery').value.trim();
   const maxResults = parseInt(document.getElementById('arxivMax').value) || 5;
-  const btn = document.getElementById('btnArxivIngest');
 
   if (!q) return;
-  btn.disabled = true;
-  btn.textContent = 'Ingesting...';
 
-  try {
-    const r = await fetch(BASE() + '/ingest/arxiv', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ arxiv_query: q, max_results: maxResults })
-    });
-    if (r.ok) {
-      document.getElementById('arxivQuery').value = '';
-      refreshStats();
-      loadGraph();
-      loadIngestionHistory();
-    }
-  } catch(e) {
-    alert('Failed to ingest arXiv query.');
-  } finally {
-    btn.disabled = false;
-    btn.textContent = 'Extract';
-  }
+  const payload = { arxiv_query: q, max_results: maxResults };
+
+  promptYashviAuth('/ingest/arxiv', payload, () => {
+    document.getElementById('arxivQuery').value = '';
+    refreshStats();
+    loadGraph();
+    loadIngestionHistory();
+  });
 }
 
 async function ingestText() {
   const title = document.getElementById('textTitle').value.trim();
   const text = document.getElementById('textContent').value.trim();
-  const btn = document.getElementById('btnTextIngest');
 
   if (!text) return;
-  btn.disabled = true;
-  btn.textContent = 'Extracting...';
 
-  try {
-    const r = await fetch(BASE() + '/ingest/text', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ title: title || 'Untitled Note', text: text, doc_id: '' })
-    });
-    if (r.ok) {
-      document.getElementById('textTitle').value = '';
-      document.getElementById('textContent').value = '';
-      refreshStats();
-      loadGraph();
-      loadIngestionHistory();
-    }
-  } catch(e) {
-    alert('Failed to ingest text content.');
-  } finally {
-    btn.disabled = false;
-    btn.textContent = 'Extract Triples';
-  }
+  const payload = { title: title || 'Untitled Note', text: text, doc_id: '' };
+
+  promptYashviAuth('/ingest/text', payload, () => {
+    document.getElementById('textTitle').value = '';
+    document.getElementById('textContent').value = '';
+    refreshStats();
+    loadGraph();
+    loadIngestionHistory();
+  });
 }
 
 async function sendQuery() {

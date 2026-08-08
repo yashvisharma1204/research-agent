@@ -47,6 +47,7 @@ class KGMerger:
             return record["name"] if record else canonical
 
     def _resolve_entity(self, name: str, entity_type: str) -> str:
+        # 1. Check for an exact match first (fastest)
         with self.driver.session() as s:
             exact = s.run(
                 "MATCH (e:Entity {name: $name, type: $type}) RETURN e.name LIMIT 1",
@@ -55,25 +56,38 @@ class KGMerger:
             if exact:
                 return name
 
-        with self.driver.session() as s:
-            candidates = s.run(
-                "MATCH (e:Entity {type: $type}) RETURN e.name AS name LIMIT 500",
-                type=entity_type,
-            ).data()
-
-        if not candidates:
+        # 2. Generate embedding for the new entity name using your embedder
+        try:
+            query_emb = _encode(name)[0].tolist()
+        except Exception as exc:
+            logger.debug("Entity embedding unavailable for '%s': %s", name, exc)
             return name
 
-        candidate_names = [c["name"] for c in candidates]
-        query_emb = _encode(name)[0]
-        cand_embs = _encode(candidate_names)
+        # 3. Use Neo4j native vector index to find the most similar entity of the same type
+        cypher = """
+        CALL db.index.vector.queryNodes('entity_embedding', 1, $embedding)
+        YIELD node, score
+        WHERE node.type = $type AND score >= $threshold
+        RETURN node.name AS name, score
+        """
 
-        sims = cand_embs @ query_emb
-        best_idx = int(np.argmax(sims))
+        # We use cfg.ENTITY_MERGE_THRESHOLD for the cosine similarity cutoff
+        try:
+            with self.driver.session() as s:
+                result = s.run(
+                    cypher,
+                    embedding=query_emb,
+                    type=entity_type,
+                    threshold=cfg.ENTITY_MERGE_THRESHOLD,
+                ).single()
+        except Exception as exc:
+            logger.warning("Neo4j vector lookup unavailable for '%s': %s", name, exc)
+            return name
 
-        if sims[best_idx] >= cfg.ENTITY_MERGE_THRESHOLD:
-            canonical = candidate_names[best_idx]
-            logger.debug("Entity merge: '%s' → '%s' (sim=%.3f)", name, canonical, sims[best_idx])
+        if result:
+            canonical = result["name"]
+            score = result["score"]
+            logger.debug("Entity merge (Neo4j Vector): '%s' → '%s' (sim=%.3f)", name, canonical, score)
             return canonical
 
         return name
