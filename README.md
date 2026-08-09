@@ -90,7 +90,7 @@ The system is decoupled into four functional execution layers:
 
 ┌──────────────────────────────────────────────────────────────────────────────────┐
 │                                 FASTAPI ORCHESTRATOR                             │
-│  - Async I/O Event Loop        - Connection Pooling       - Cache-Aside Manager │
+│  - Async I/O Event Loop        - Connection Pooling       - Cache-Aside Manager  │
 └──────────┬───────────────────────────────┬───────────────────────────────┬───────┘
            │                               │                               │
            ▼                               ▼                               ▼
@@ -300,7 +300,8 @@ All endpoints are served via FastAPI with automatic OpenAPI documentation availa
 
 The frontend UI (`index.html`) is designed for high-throughput visualization without the runtime overhead of complex JavaScript frameworks.
 
-<img width="1512" height="864" alt="Screenshot 2026-08-08 at 3 48 47 PM" src="https://github.com/user-attachments/assets/010ca1e5-2fde-4621-b89f-30632fb20675" />
+<img width="1512" height="855" alt="Screenshot 2026-08-09 at 2 10 16 PM" src="https://github.com/user-attachments/assets/fe6ec5d7-09ef-4609-8cb9-10045c5227da" />
+
 
 ### 1. Bento UI Architecture
 
