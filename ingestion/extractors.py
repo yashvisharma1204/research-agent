@@ -353,26 +353,23 @@ def is_high_quality_entity(entity_name: str) -> bool:
     # 3. Content-Quality Phrase Check: Lowercase scan against banned descriptive fragments
     lower_name = clean_name.lower()
     for phrase in BANNED_ENTITY_KEYWORDS:
-        if phrase in lower_name:
+        pattern = r'\b' + re.escape(phrase) + r'\b'
+        if re.search(pattern, lower_name):
             logger.debug("Entity filtered (banned descriptor matched '%s'): '%s'", phrase, clean_name)
             return False
             
-    return True
+    return type(clean_name) is str
 
 
-# <--- Updated Function Signature to accept published_date --->
 def extract_triples(text: str, source_id: str = "", published_date: str = "Unknown") -> list[Triple]:
     """Convenience wrapper — uses whichever backend is configured and applies quality filters."""
     
-    # <--- Inject date into metadata so LLMExtractor picks it up --->
     metadata = {"publication_date": published_date}
     
-    # Note the added metadata argument to pass it along
     raw_triples = get_extractor().extract(text, source_id=source_id, metadata=metadata)
     
     high_quality_triples = []
     for t in raw_triples:
-        # Ensure BOTH subject and object pass the quality filter
         if is_high_quality_entity(t.subject) and is_high_quality_entity(t.obj):
             high_quality_triples.append(t)
         else:

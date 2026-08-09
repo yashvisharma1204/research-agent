@@ -400,6 +400,20 @@ TOPIC_ALIASES = {
 }
 
 
+def _is_exact_paper_query(query: str) -> bool:
+    """
+    Returns True ONLY if the query is an explicit exact paper identifier:
+    - Wrapped in quotation marks (e.g., "Attention Is All You Need")
+    - A direct arXiv ID (e.g., 1706.03762)
+    """
+    text = (query or "").strip()
+    if text.startswith('"') and text.endswith('"'):
+        return True
+    if re.match(r'^\d{4}\.\d{4,5}(v\d+)?$', text):
+        return True
+    return False
+
+
 def fetch_foundational(topic: str, max_results: int = 10) -> list[dict]:
     cache_key = f"{(topic or '').strip().lower()}:{max_results}"
     if cache_key in _cache:
@@ -410,9 +424,11 @@ def fetch_foundational(topic: str, max_results: int = 10) -> list[dict]:
     topic_clean = original_topic.lower().strip()
     results: list[dict] = []
 
-    if _looks_like_paper_title(original_topic):
-        logger.info("Treating '%s' as a paper title", original_topic)
-        results = fetch_by_title(original_topic, max_results)
+    # Strict routing: Only trigger exact title lookup if explicitly wrapped in quotes or an ID
+    if _is_exact_paper_query(original_topic):
+        clean_title = original_topic.strip('"')
+        logger.info("Treating '%s' as an exact paper title or ID", clean_title)
+        results = fetch_by_title(clean_title, max_results)
         if results:
             _cache[cache_key] = results
             return results
