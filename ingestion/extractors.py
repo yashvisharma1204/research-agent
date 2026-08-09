@@ -28,6 +28,7 @@ class Triple:
     obj_type: str = "unknown"
     subject_props: dict = None
     obj_props: dict = None
+    temporal_rationale: str = ""  # <--- Added temporal rationale property
 
     def __post_init__(self):
         self.subject_props = self.subject_props or {}
@@ -37,12 +38,12 @@ class Triple:
         return f"({self.subject}:{self.subject_type}) --[{self.predicate}]--> ({self.obj}:{self.obj_type})"
 
 
+# <--- Updated Prompt with Temporal Anchor Rules --->
 _SYSTEM_PROMPT = """You are an advanced scientific knowledge graph extractor.
 Given a text, extract factual (subject, predicate, object) triples and rich property payloads.
 
 Rules:
 - Subjects and objects should be granular technical entities or mechanism components.
-- Predicates should be high-signal semantic verbs: replaces_component_with, introduces_training_objective, ameliorates_limitation_of, benchmarked_superior_to, proposes, uses_dataset, achieves_score_on, related_to.
 - Classify every subject and object into ONE of these granular architectural types:
     ArchitecturalInnovation — structural design changes (e.g., Rotary Embedding, SwiGLU, Multi-Query Attention)
     TrainingObjective       — loss formulations, pre-training tasks (e.g., Masked Language Modeling, DPO, RLHF)
@@ -54,8 +55,16 @@ Rules:
     Paper                   — publication references
     Unknown                 — fallback type
 - Extract a "properties" dictionary for each node containing technical attributes (e.g., parameters, dimensions, brief operational summaries if mentioned).
-- Return ONLY a valid JSON array, no markdown, no explanation.
-- Each element format: {
+- Predicates should be high-signal semantic verbs: replaces_component_with, introduces_training_objective, ameliorates_limitation_of, benchmarked_superior_to, proposes, uses_dataset, achieves_score_on, related_to.
+
+### GENERATIONAL SCHEMA ###
+You MUST use the provided Publication Date to anchor relative temporal claims. Use these specific predicates for generational mappings:
+- BUILDS_UPON: The current text extends an older architecture or dataset.
+- SUPERSEDES: The current text replaces, outperforms, or deprecates a previous method.
+- DERIVED_FROM: The model or data originates from a prior source.
+
+Return ONLY a valid JSON array, no markdown, no explanation.
+Each element format: {
     "subject": "...",
     "subject_type": "ArchitecturalInnovation|TrainingObjective|LossFunction|HardwareConstraint|Dataset|Metric|Concept|Paper|Unknown",
     "subject_properties": {"summary": "...", "parameters": "..."},
@@ -63,7 +72,8 @@ Rules:
     "object": "...",
     "object_type": "ArchitecturalInnovation|TrainingObjective|LossFunction|HardwareConstraint|Dataset|Metric|Concept|Paper|Unknown",
     "object_properties": {"summary": "...", "parameters": "..."},
-    "confidence": 0.0-1.0
+    "confidence": 0.0-1.0,
+    "temporal_rationale": "Brief explanation of the timeline dependency if BUILDS_UPON, SUPERSEDES, or DERIVED_FROM is used (otherwise leave empty)"
   }"""
 
 BANNED_ENTITY_KEYWORDS = {
@@ -119,7 +129,8 @@ class LLMExtractor:
                     subject_type=item.get("subject_type", "Unknown"),
                     obj_type=item.get("obj_type", "Unknown"),
                     subject_props=item.get("subject_properties", {}),
-                    obj_props=item.get("object_properties", {})
+                    obj_props=item.get("object_properties", {}),
+                    temporal_rationale=item.get("temporal_rationale", "") # <--- Added extraction mapping
                 ))
             return triples
         except Exception as exc:
@@ -162,7 +173,8 @@ class MultiPassLLMExtractor(LLMExtractor):
                     subject_type=item.get("subject_type", "Unknown"),
                     obj_type=item.get("obj_type", "Unknown"),
                     subject_props=item.get("subject_properties", {}),
-                    obj_props=item.get("object_properties", {})
+                    obj_props=item.get("object_properties", {}),
+                    temporal_rationale=item.get("temporal_rationale", "") # <--- Added extraction mapping
                 ))
             return triples
         except Exception as exc:
@@ -324,9 +336,15 @@ def is_high_quality_entity(entity_name: str) -> bool:
     return True
 
 
-def extract_triples(text: str, source_id: str = "") -> list[Triple]:
+# <--- Updated Function Signature to accept published_date --->
+def extract_triples(text: str, source_id: str = "", published_date: str = "Unknown") -> list[Triple]:
     """Convenience wrapper — uses whichever backend is configured and applies quality filters."""
-    raw_triples = get_extractor().extract(text, source_id=source_id)
+    
+    # <--- Inject date into metadata so LLMExtractor picks it up --->
+    metadata = {"publication_date": published_date}
+    
+    # Note the added metadata argument to pass it along
+    raw_triples = get_extractor().extract(text, source_id=source_id, metadata=metadata)
     
     high_quality_triples = []
     for t in raw_triples:

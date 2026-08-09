@@ -228,15 +228,28 @@ class Retriever:
         )
 
     def index_document(self, doc: dict):
-        """Generates an embedding and saves the text/vector directly to the Neo4j Paper node."""
-        text = f"{doc.get('title', '')}. {doc.get('abstract', '')}"
-        emb = _encode([text])[0].tolist()
-        doc_id = doc.get("title", doc.get("id", ""))
+        """Generates an embedding and saves the text, vector, and metadata directly to the Neo4j node."""
+        doc_id = doc.get("title") or doc.get("id", "")
+        if not doc_id:
+            logger.warning("Cannot index document without a title or ID.")
+            return
+        abstract_or_text = doc.get("abstract") or doc.get("text", "")
+        full_text = f"{doc.get('title', '')}. {abstract_or_text}".strip()
         
+        emb = _encode([full_text])[0].tolist()
+        pub_date = doc.get("published_date") or "Unknown"
         cypher = """
         MATCH (e:Entity {name: $name})
-        SET e.text = $text, e.embedding = $emb
+        SET e.text = $text, 
+            e.embedding = $emb,
+            e.published_date = CASE WHEN $pub_date <> 'Unknown' THEN $pub_date ELSE COALESCE(e.published_date, 'Unknown') END
+        RETURN count(e) AS matched_count
         """
         with self.driver.session() as s:
-            s.run(cypher, name=doc_id, text=text, emb=emb)
-        logger.info("Vector embedding saved to Neo4j for node: %s", doc_id)
+            result = s.run(cypher, name=doc_id, text=full_text, emb=emb, pub_date=pub_date)
+            record = result.single()
+            matched = record["matched_count"] if record else 0
+        if matched > 0:
+            logger.info("Vector embedding & metadata saved to Neo4j for node: %s", doc_id)
+        else:
+            logger.warning("No Neo4j entity found with name '%s' to attach embedding.", doc_id)

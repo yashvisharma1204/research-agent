@@ -31,16 +31,13 @@ class KGMerger:
         entity_type: str,
         properties: dict | None = None,
     ) -> str:
-        properties = properties or {}
-        
-        # Ensure embedding is generated and stored for vector indexing and clustering
-        if "embedding" not in properties:
+        props = dict(properties) if properties else {}
+        canonical = self._resolve_entity(name, entity_type) or name
+        if "embedding" not in props:
             try:
-                properties["embedding"] = _encode(name)[0].tolist()
+                props["embedding"] = _encode(canonical)[0].tolist()
             except Exception as exc:
-                logger.debug("Entity embedding unavailable for '%s': %s", name, exc)
-
-        canonical = self._resolve_entity(name, entity_type)
+                logger.debug("Entity embedding unavailable for '%s': %s", canonical, exc)
 
         cypher = """
         MERGE (e:Entity {name: $name})
@@ -56,7 +53,7 @@ class KGMerger:
         RETURN e.name AS name
         """
         with self.driver.session() as s:
-            result = s.run(cypher, name=canonical, type=entity_type, props=properties)
+            result = s.run(cypher, name=canonical, type=entity_type, props=props)
             record = result.single()
             return record["name"] if record else canonical
 

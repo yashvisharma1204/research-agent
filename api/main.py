@@ -118,6 +118,7 @@ class IngestTextRequest(BaseModel):
     title: str
     text: str
     doc_id: str = ""
+    published_date: str = "Unknown"
 
 
 class IngestResponse(BaseModel):
@@ -207,17 +208,22 @@ async def ingest_arxiv_endpoint(req: IngestURLRequest):
 
     for doc in docs:
         text = f"{doc['title']}. {doc['abstract']}"
-        triples = extract_triples(text, source_id=doc["id"])
+        
+        # Safely get the published date
+        pub_date = doc.get("published_date") or "Unknown"
 
-        # Store paper as entity, passing the 'text' property into $props
+        # Pass the date into the extractor
+        triples = extract_triples(text, source_id=doc["id"], published_date=pub_date)
+
+        # Store paper as entity, adding published_date to Neo4j properties
         merger.upsert_entity(doc["title"], "Paper", {
             "url": doc.get("url", ""),
             "source": doc.get("source", ""),
             "citations": doc.get("citations", 0),
-            "text": doc["abstract"],  # <--- Persisted in Neo4j for summary generation
+            "published_date": pub_date,
+            "text": doc["abstract"],
         })
 
-        # Store triples
         for t in triples:
             merger.upsert_entity(t.subject, t.subject_type, {})
             merger.upsert_entity(t.obj, t.obj_type, {})
@@ -238,17 +244,28 @@ async def ingest_text_endpoint(req: IngestTextRequest):
         raise HTTPException(503, "Agent not initialised")
 
     doc_id = req.doc_id or req.title
-    triples = extract_triples(req.text, source_id=doc_id)
+    
+    # Pass the date into the extractor
+    triples = extract_triples(req.text, source_id=doc_id, published_date=req.published_date)
 
+    # Persist the date in Neo4j
     merger.upsert_entity(req.title, "Document", {
-        "text": req.text,  # <--- Persisted in Neo4j
+        "text": req.text,
+        "published_date": req.published_date,
     })
+    
     for t in triples:
         merger.upsert_entity(t.subject, t.subject_type, {})
         merger.upsert_entity(t.obj, t.obj_type, {})
         merger.upsert_triple(t.subject, t.predicate, t.obj, doc_id, t.confidence)
 
-    retriever.index_document({"id": doc_id, "title": req.title, "abstract": req.text[:2000]})
+    # Pass the date into the vector database
+    retriever.index_document({
+        "id": doc_id, 
+        "title": req.title, 
+        "abstract": req.text[:2000],
+        "published_date": req.published_date
+    })
 
     return IngestResponse(documents_processed=1, triples_extracted=len(triples))
 
@@ -324,7 +341,11 @@ async def get_ingestion_history():
     cypher = """
     MATCH (e:Entity)
     WHERE e.text IS NOT NULL
-    RETURN DISTINCT e.name AS title, e.type AS type, size(e.text) as text_length
+    RETURN DISTINCT 
+        e.name AS title, 
+        e.type AS type, 
+        size(e.text) AS text_length,
+        e.published_date AS published_date
     ORDER BY title DESC
     LIMIT 20
     """
@@ -335,7 +356,6 @@ async def get_ingestion_history():
     except Exception as exc:
         logger.error("Failed to fetch ingestion history: %s", exc)
         return {"history": []}
-
 
 @app.get("/graph", response_model=GraphResponse)
 async def get_graph(limit: int = 120):

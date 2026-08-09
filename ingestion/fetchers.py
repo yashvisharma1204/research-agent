@@ -201,7 +201,7 @@ def fetch_by_title(title: str, max_results: int = 5) -> list[dict]:
     params = {
         "query": f'"{query}"',
         "limit": max_results,
-        "fields": "title,abstract,authors,year,citationCount,externalIds",
+        "fields": "title,abstract,authors,year,publicationDate,citationCount,externalIds",
     }
     try:
         with httpx.Client(timeout=15) as client:
@@ -224,7 +224,8 @@ def fetch_by_title(title: str, max_results: int = 5) -> list[dict]:
             authors=[a["name"] for a in paper.get("authors", [])],
             source="semantic_scholar_title",
             url=f"https://semanticscholar.org/paper/{paper.get('paperId', '')}",
-            published_date=str(paper.get("year", "")),
+            # Prefer publicationDate (YYYY-MM-DD), fallback to year
+            published_date=paper.get("publicationDate") or str(paper.get("year", "")),
             citations=paper.get("citationCount", 0),
         ))
 
@@ -268,7 +269,7 @@ def fetch_by_citations(topic: str, max_results: int = 10) -> list[dict]:
     params = {
         "query": topic,
         "limit": max_results,
-        "fields": "title,abstract,authors,year,citationCount,externalIds",
+        "fields": "title,abstract,authors,year,publicationDate,citationCount,externalIds",
     }
     try:
         with httpx.Client(timeout=15) as client:
@@ -291,7 +292,7 @@ def fetch_by_citations(topic: str, max_results: int = 10) -> list[dict]:
             authors=[a["name"] for a in paper.get("authors", [])],
             source="semantic_scholar",
             url=f"https://semanticscholar.org/paper/{paper.get('paperId', '')}",
-            published_date=str(paper.get("year", "")),
+            published_date=paper.get("publicationDate") or str(paper.get("year", "")),
             citations=paper.get("citationCount", 0),
         ))
 
@@ -359,6 +360,11 @@ def fetch_rss(feed_urls: list[str] | None = None, max_per_feed: int = 10) -> lis
                 doc_id = hashlib.md5(
                     entry.get("link", entry.title).encode()
                 ).hexdigest()
+
+                pub_date = entry.get("published", "")
+                if entry.get("published_parsed"):
+                    pub_date = time.strftime("%Y-%m-%dT%H:%M:%SZ", entry.published_parsed)
+
                 results.append(_doc(
                     doc_id=doc_id,
                     title=entry.get("title", ""),
@@ -366,7 +372,7 @@ def fetch_rss(feed_urls: list[str] | None = None, max_per_feed: int = 10) -> lis
                     authors=[],
                     source="rss",
                     url=entry.get("link", ""),
-                    published_date=entry.get("published", ""),
+                    published_date=pub_date,
                 ))
         except Exception as exc:
             logger.warning("RSS fetch failed for %s: %s", url, exc)
