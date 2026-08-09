@@ -108,7 +108,10 @@ class Synthesiser:
             Question: {question}"""
 
             # 1. Initial Generation Pass
-            response = self._model.generate_content(prompt)
+            response = self._model.generate_content(
+                prompt,
+                generation_config=genai.types.GenerationConfig(max_output_tokens=2048),
+            )
             answer_text = response.text.strip()
             logger.info("Initial synthesis complete (%d chars)", len(answer_text))
 
@@ -130,7 +133,10 @@ class Synthesiser:
             try:
                 audit_res = self._auditor_model.generate_content(
                     audit_prompt,
-                    generation_config={"response_mime_type": "application/json"}
+                    generation_config=genai.types.GenerationConfig(
+                        max_output_tokens=512,
+                        response_mime_type="application/json",
+                    ),
                 )
                 audit_data = json.loads(audit_res.text.strip())
                 is_faithful = audit_data.get("is_faithful", True)
@@ -168,7 +174,7 @@ class Synthesiser:
                 entity_seeds=[], graph_triple_count=0, vector_result_count=0, model="Gemini", is_faithful=False, critique_notes="Model Not Found"
             )
         except exceptions.GoogleAPICallError as e:
-            logger.error(f"Google API Error: {e}")
+            logger.error("Google API Error: %s", e)
             return Answer(
                 question=question,
                 answer="⚠️ Google API Connection Error.",

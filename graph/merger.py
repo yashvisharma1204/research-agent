@@ -98,7 +98,7 @@ class KGMerger:
         if result:
             canonical = result["name"]
             score = result["score"]
-            logger.debug("Entity merge (Neo4j Vector): '%s' → '%s' (sim=%.3f)", name, canonical, score)
+            logger.debug("Entity merge (Neo4j Vector): '%s' -> '%s' (sim=%.3f)", name.replace('\n', ' '), canonical.replace('\n', ' '), score)
             return canonical
 
         return name

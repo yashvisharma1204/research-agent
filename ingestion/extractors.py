@@ -109,7 +109,10 @@ class LLMExtractor:
         
         try:
             if hasattr(self.llm_client, "generate_content"):
-                response = self.llm_client.generate_content(prompt)
+                response = self.llm_client.generate_content(
+                    prompt,
+                    generation_config=genai.types.GenerationConfig(max_output_tokens=2048),
+                )
                 raw_text = response.text
             else:
                 raw_text = self.llm_client.generate(prompt)
@@ -127,7 +130,7 @@ class LLMExtractor:
                     confidence=float(item.get("confidence", 1.0)),
                     source_id=source_id,
                     subject_type=item.get("subject_type", "Unknown"),
-                    obj_type=item.get("obj_type", "Unknown"),
+                    obj_type=item.get("object_type", "Unknown"),
                     subject_props=item.get("subject_properties", {}),
                     obj_props=item.get("object_properties", {}),
                     temporal_rationale=item.get("temporal_rationale", "") # <--- Added extraction mapping
@@ -158,7 +161,14 @@ class MultiPassLLMExtractor(LLMExtractor):
         )
         
         try:
-            response_text = self.llm_client.generate_content(pass_two_prompt).text if hasattr(self.llm_client, "generate_content") else self.llm_client.generate(pass_two_prompt)
+            response_text = (
+                self.llm_client.generate_content(
+                    pass_two_prompt,
+                    generation_config=genai.types.GenerationConfig(max_output_tokens=2048),
+                ).text
+                if hasattr(self.llm_client, "generate_content")
+                else self.llm_client.generate(pass_two_prompt)
+            )
             cleaned_text = re.sub(r"^```json\s*|\s*```$", "", response_text.strip(), flags=re.IGNORECASE)
             data = json.loads(cleaned_text)
             
@@ -171,7 +181,7 @@ class MultiPassLLMExtractor(LLMExtractor):
                     confidence=float(item.get("confidence", 1.0)),
                     source_id=source_id,
                     subject_type=item.get("subject_type", "Unknown"),
-                    obj_type=item.get("obj_type", "Unknown"),
+                    obj_type=item.get("object_type", "Unknown"),
                     subject_props=item.get("subject_properties", {}),
                     obj_props=item.get("object_properties", {}),
                     temporal_rationale=item.get("temporal_rationale", "") # <--- Added extraction mapping
@@ -215,7 +225,7 @@ class RebelExtractor:
             triples.append(current)
         return triples
 
-    def extract(self, text: str, source_id: str = "") -> list[Triple]:
+    def extract(self, text: str, source_id: str = "", metadata: dict = None) -> list[Triple]:
         try:
             outputs = self._pipe(
                 text[:1024],
@@ -270,7 +280,7 @@ class GLiNERExtractor:
                 return pred
         return "related_to"
 
-    def extract(self, text: str, source_id: str = "") -> list[Triple]:
+    def extract(self, text: str, source_id: str = "", metadata: dict = None) -> list[Triple]:
         try:
             sentences = [s.strip() for s in text.split(".") if len(s.strip()) > 20]
             triples = []

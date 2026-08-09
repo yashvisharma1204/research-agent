@@ -135,6 +135,7 @@ def fetch_by_arxiv_ids(paper_ids: list[str]) -> list[dict]:
     
     client = arxiv.Client(page_size=min(len(paper_ids), 10), delay_seconds=4)
     search = arxiv.Search(id_list=paper_ids)
+    results: list[dict] = []
     
     for attempt in range(3):
         try:
@@ -311,11 +312,10 @@ def fetch_arxiv(query: str, max_results: int = 5) -> list[dict]:
     """Fetch papers based on a text search query with built-in rate-limit handling."""
     logger.info("Fetching top %d papers for query: '%s'", max_results, query)
     
-    # Configure the client to handle retries natively
     client = arxiv.Client(delay_seconds=4)
     search = arxiv.Search(query=query, max_results=max_results)
+    results: list[dict] = []
     
-    # Implement active backoff loops
     for attempt in range(3):
         try:
             results = []
@@ -329,7 +329,7 @@ def fetch_arxiv(query: str, max_results: int = 5) -> list[dict]:
                     url=r.entry_id,
                     published_date=r.published.isoformat() if r.published else "",
                 ))
-            break  # Break loop on successful resolution
+            break
         except arxiv.HTTPError as e:
             if e.status == 429:
                 wait = 12 * (attempt + 1)
@@ -357,9 +357,9 @@ def fetch_rss(feed_urls: list[str] | None = None, max_per_feed: int = 10) -> lis
         try:
             feed = feedparser.parse(url)
             for entry in feed.entries[:max_per_feed]:
-                doc_id = hashlib.md5(
+                doc_id = hashlib.sha256(
                     entry.get("link", entry.title).encode()
-                ).hexdigest()
+                ).hexdigest()[:32]
 
                 pub_date = entry.get("published", "")
                 if entry.get("published_parsed"):

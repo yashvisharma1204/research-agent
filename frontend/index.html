@@ -982,7 +982,7 @@ async function sendQuery() {
   const chatArea = document.getElementById('chatArea');
   const btn = document.getElementById('btnSendQuery');
 
-  chatArea.innerHTML += `<div class="message user"><div class="msg-bubble">${q}</div></div>`;
+  chatArea.innerHTML += `<div class="message user"><div class="msg-bubble">${escapeHtml(q)}</div></div>`;
   input.value = '';
   chatArea.scrollTop = chatArea.scrollHeight;
   btn.disabled = true;
@@ -1001,8 +1001,8 @@ async function sendQuery() {
       chatArea.innerHTML += `
         <div class="message assistant">
           <div class="msg-bubble">
-            <span class="route-tag ${badgeClass}">${route.toUpperCase()}</span>
-            <div>${d.answer || d.response || 'No response generated.'}</div>
+            <span class="route-tag ${badgeClass}">${escapeHtml(route.toUpperCase())}</span>
+            <div>${escapeHtml(d.answer || d.response || 'No response generated.')}</div>
           </div>
         </div>
       `;
@@ -1175,7 +1175,7 @@ function renderGraph(nodes, links) {
         const res = await fetch(BASE() + '/api/paper/summary/' + encodeURIComponent(d.name || d.id));
         if (res.ok) {
           const data = await res.json();
-          descEl.innerHTML = data.summary || data.error || 'No summary generated.';
+          descEl.textContent = data.summary || data.error || 'No summary generated.';
         } else {
           descEl.textContent = 'Failed to fetch AI summary.';
         }
@@ -1190,7 +1190,9 @@ function renderGraph(nodes, links) {
     const linkBtn = document.getElementById('drawerExternalLink');
     if (d.url || d.arxiv_id || d.type === 'Paper') {
       linkContainer.style.display = 'block';
-      linkBtn.href = d.url || (d.arxiv_id ? `https://arxiv.org/abs/${d.arxiv_id}` : `https://scholar.google.com/scholar?q=${encodeURIComponent(d.name || d.id)}`);
+      const rawUrl = d.url || (d.arxiv_id ? `https://arxiv.org/abs/${d.arxiv_id}` : `https://scholar.google.com/scholar?q=${encodeURIComponent(d.name || d.id)}`);
+      const safeUrl = (rawUrl.startsWith('https://') || rawUrl.startsWith('http://')) ? rawUrl : '#';
+      linkBtn.href = safeUrl;
       linkBtn.textContent = d.arxiv_id ? 'View arXiv Paper ↗' : 'Search Scholar ↗';
     } else {
       linkContainer.style.display = 'none';

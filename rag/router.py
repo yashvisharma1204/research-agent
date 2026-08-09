@@ -49,7 +49,10 @@ class QueryRouter:
     def route(self, query: str) -> RouteType:
         """Return the route type for *query*."""
         try:
-            response = self._model.generate_content(query[:500])
+            response = self._model.generate_content(
+                query[:500],
+                generation_config=genai.types.GenerationConfig(max_output_tokens=10),
+            )
             route = response.text.strip().lower()
             if route in ("cypher", "vector", "hybrid"):
                 logger.debug("Router: '%s' → %s", query[:60], route)
@@ -63,12 +66,16 @@ class QueryRouter:
 
 # Module-level singleton — imported by retriever.py
 _router: QueryRouter | None = None
+_router_lock = __import__('threading').Lock()
 
 
 def get_router() -> QueryRouter:
     global _router
-    if _router is None:
-        _router = QueryRouter()
+    if _router is not None:
+        return _router
+    with _router_lock:
+        if _router is None:
+            _router = QueryRouter()
     return _router
 
 

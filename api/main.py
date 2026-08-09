@@ -154,7 +154,10 @@ def generate_paper_summary(paper_title: str, text: str, relations: list) -> str:
     genai.configure(api_key=cfg.GEMINI_API_KEY)
     gemini_model = genai.GenerativeModel(model_name=cfg.LLM_MODEL)
     
-    response = gemini_model.generate_content(prompt)
+    response = gemini_model.generate_content(
+        prompt,
+        generation_config=genai.types.GenerationConfig(max_output_tokens=512),
+    )
     return response.text.strip()
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
@@ -225,9 +228,13 @@ async def ingest_arxiv_endpoint(req: IngestURLRequest):
         })
 
         for t in triples:
-            merger.upsert_entity(t.subject, t.subject_type, {})
-            merger.upsert_entity(t.obj, t.obj_type, {})
-            merger.upsert_triple(t.subject, t.predicate, t.obj, doc["id"], t.confidence)
+            merger.upsert_entity(t.subject, t.subject_type, t.subject_props)
+            merger.upsert_entity(t.obj, t.obj_type, t.obj_props)
+            merger.upsert_triple(
+                t.subject, t.predicate, t.obj, doc["id"], t.confidence,
+                subj_type=t.subject_type, obj_type=t.obj_type,
+                subj_props=t.subject_props, obj_props=t.obj_props,
+            )
 
         retriever.index_document(doc)
         total_triples += len(triples)
@@ -255,9 +262,13 @@ async def ingest_text_endpoint(req: IngestTextRequest):
     })
     
     for t in triples:
-        merger.upsert_entity(t.subject, t.subject_type, {})
-        merger.upsert_entity(t.obj, t.obj_type, {})
-        merger.upsert_triple(t.subject, t.predicate, t.obj, doc_id, t.confidence)
+        merger.upsert_entity(t.subject, t.subject_type, t.subject_props)
+        merger.upsert_entity(t.obj, t.obj_type, t.obj_props)
+        merger.upsert_triple(
+            t.subject, t.predicate, t.obj, doc_id, t.confidence,
+            subj_type=t.subject_type, obj_type=t.obj_type,
+            subj_props=t.subject_props, obj_props=t.obj_props,
+        )
 
     # Pass the date into the vector database
     retriever.index_document({
@@ -363,13 +374,13 @@ async def get_graph(limit: int = 120):
     if not merger:
         raise HTTPException(503, "Agent not initialised")
 
-    cypher = f"""
+    cypher = """
     MATCH (s:Entity)-[r:RELATION]->(o:Entity)
     RETURN 
         s.name AS s_name, s.type AS s_type, s.mention_count AS s_mention,
         o.name AS e_name, o.type AS e_type, o.mention_count AS e_mention,
         r.type AS r_type, r.confidence AS r_confidence, r.mention_count AS r_mention, r.sources AS r_sources
-    LIMIT {limit}
+    LIMIT $limit
     """
 
     nodes_map: dict[str, dict] = {}
@@ -381,7 +392,7 @@ async def get_graph(limit: int = 120):
         return int(val) if val is not None else 0
 
     with get_driver().session() as session:
-        records = session.run(cypher).data()
+        records = session.run(cypher, limit=limit).data()
 
     for rec in records:
         s_id = rec.get("s_name") or "?"
