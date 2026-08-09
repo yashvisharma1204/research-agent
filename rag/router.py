@@ -25,6 +25,9 @@ _ROUTER_SYSTEM = """You are a query router for a research knowledge graph.
     Valid relationship types in this graph:
     introduces, proposes, outperforms, trained_on, uses, builds_on,
     related_to, cites, evaluates, improves, published_by, uses_dataset,
+    replaces_component_with, introduces_training_objective, ameliorates_limitation_of,
+    benchmarked_superior_to, introduces, proposes, outperforms, trained_on, uses,
+    builds_on, related_to, cites, evaluates, improves, published_by, uses_dataset,
     achieves_score_on, is_a, leads_to, works_with, generalizes_to
 
     Classify the query into ONE route:

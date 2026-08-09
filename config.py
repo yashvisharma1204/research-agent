@@ -42,3 +42,20 @@ class Config:
 
 
 cfg = Config()
+
+# High-signal semantic predicates & weighting for Layer 3 Graph Traversal
+HIGH_SIGNAL_PREDICATES = {
+    "replaces_component_with": 1.0,
+    "introduces_training_objective": 0.95,
+    "ameliorates_limitation_of": 0.90,
+    "benchmarked_superior_to": 0.85,
+    "proposes": 0.80,
+    "uses_dataset": 0.60,
+    "achieves_score_on": 0.60,
+    "related_to": 0.30,
+}
+
+
+def get_predicate_weight(predicate: str) -> float:
+    """Return the traversal weight for a given semantic predicate."""
+    return HIGH_SIGNAL_PREDICATES.get(predicate, 0.40)

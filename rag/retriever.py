@@ -1,7 +1,7 @@
 """
 rag/retriever.py
 Two retrieval strategies, fused into a single context bundle:
-  1. Graph traversal — Multi-hop Cypher reasoning over Neo4j (Day 10)
+  1. Graph traversal — Multi-hop Cypher reasoning over Neo4j (Day 10) with Layer 3 Predicate Weighting
   2. Vector search   — Native Neo4j Vector index similarity
 """
 from __future__ import annotations
@@ -12,7 +12,7 @@ from typing import NamedTuple
 from neo4j import Driver
 import google.generativeai as genai
 
-from config import cfg
+from config import cfg, get_predicate_weight
 from rag.router import route_query
 from utils.embedder import encode as _encode
 
@@ -73,15 +73,14 @@ class GraphRetriever:
         limit: int | None = None,
     ) -> list[GraphTriple]:
         """
-        Day 10: Traverses up to 2 hops across the graph to extract contextual paths.
-        Day 9: Employs structural density math to calculate accurate relevance scores.
+        Traverses up to 2 hops across the graph to extract contextual paths,
+        incorporating Layer 3 high-signal semantic predicate weighting.
         """
         limit = limit or cfg.GRAPH_TRIPLE_LIMIT
         if not entity_names:
             return []
             
-        # Day 10: Variable length multi-hop matching (1 to 2 hops deep)
-        # Avoids tracking circular paths back to the starting seed node.
+        # Variable length multi-hop matching (1 to 2 hops deep) targeting the custom :RELATION edge type
         cypher = """
         MATCH (seed:Entity)
         WHERE ANY(s IN $seeds WHERE toLower(seed.name) CONTAINS toLower(s))
@@ -91,7 +90,7 @@ class GraphRetriever:
         WITH startNode(rel) AS s_node, endNode(rel) AS t_node, rel
         RETURN DISTINCT 
             s_node.name AS subject, 
-            type(rel) AS predicate,
+            coalesce(rel.type, 'related_to') AS predicate,
             t_node.name AS obj,
             coalesce(rel.confidence, 1.0) AS confidence,
             coalesce(rel.mention_count, 1) AS mention_count
@@ -104,14 +103,16 @@ class GraphRetriever:
         for r in records:
             conf = float(r["confidence"])
             mentions = int(r["mention_count"])
+            predicate = r["predicate"]
             
-            # Day 9 Optimization: Confidence combined with logarithmic structural scale
-            score = conf * math.log(mentions + 1)
+            # Layer 3 Scoring Optimization: Confidence * Logarithmic Mentions * High-Signal Predicate Weight
+            pred_weight = get_predicate_weight(predicate)
+            score = conf * math.log(mentions + 1) * pred_weight
             
             processed_triples.append(
                 GraphTriple(
                     subject=r["subject"],
-                    predicate=r["predicate"],
+                    predicate=predicate,
                     obj=r["obj"],
                     confidence=conf,
                     mention_count=mentions,
@@ -124,13 +125,12 @@ class GraphRetriever:
         return processed_triples[:limit]
     
     def get_abstracts_for_entities(self, entity_names: list[str]) -> list[str]:
-        """Day 11: Fetches raw text/abstracts for nodes involved in the multi-hop paths."""
+        """Fetches raw text/abstracts for nodes involved in the multi-hop paths."""
         if not entity_names:
             return []
             
         cypher = """
         MATCH (n:Entity)
-        // Match nodes by name and ensure they actually contain text data
         WHERE n.name IN $names AND n.text IS NOT NULL
         RETURN n.name AS name, n.text AS text
         """
@@ -138,7 +138,6 @@ class GraphRetriever:
         try:
             with self.driver.session() as session:
                 records = session.run(cypher, names=entity_names).data()
-            # Format the output so Gemini knows exactly which paper the text belongs to
             return [f"[{r['name']} Abstract]: {r['text']}" for r in records]
         except Exception as exc:
             logger.warning("Failed to fetch paper abstracts: %s", exc)
@@ -211,7 +210,6 @@ class Retriever:
 
         paper_abstracts = []
         if graph_triples:
-            # Extract a unique set of every node name present in our top paths
             unique_nodes = {t.subject for t in graph_triples}.union({t.obj for t in graph_triples})
             paper_abstracts = self.graph.get_abstracts_for_entities(list(unique_nodes))
 
