@@ -79,8 +79,9 @@ class KGMerger:
 
         # 3. Use Neo4j native vector index to find the most similar entity of the same type
         cypher = """
-        CALL db.index.vector.queryNodes('entity_embedding', 1, $embedding)
-        YIELD node, score
+        MATCH (node)
+        SEARCH node IN (VECTOR INDEX entity_embedding FOR $embedding LIMIT 1)
+        SCORE AS score
         WHERE node.type = $type AND score >= $threshold
         RETURN node.name AS name, score
         """

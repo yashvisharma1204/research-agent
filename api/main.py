@@ -105,8 +105,9 @@ class QueryResponse(BaseModel):
     vector_result_count: int
     route: str
     model: str
+    is_faithful: bool         
+    critique_notes: str        
     context: dict | None = None
-
 
 class IngestURLRequest(BaseModel):
     arxiv_query: str
@@ -178,6 +179,8 @@ async def query(req: QueryRequest):
         vector_result_count=answer_obj.vector_result_count,
         route=context.route,
         model=answer_obj.model,
+        is_faithful=answer_obj.is_faithful,         # <--- Map it here
+        critique_notes=answer_obj.critique_notes,   # <--- Map it here
     )
 
     if req.include_context:

@@ -162,8 +162,9 @@ class GraphRetriever:
         """Queries the Native Neo4j vector index."""
         q_emb = _encode([query])[0].tolist()
         cypher = """
-        CALL db.index.vector.queryNodes('entity_embedding', $k, $embedding)
-        YIELD node, score
+        MATCH (node)
+        SEARCH node IN (VECTOR INDEX entity_embedding FOR $embedding LIMIT $k)
+        SCORE AS score
         RETURN node.text AS text, score, node.name AS doc_id
         """
         try:
