@@ -82,6 +82,21 @@ BANNED_ENTITY_KEYWORDS = {
     "proposed method", "framework", "approach", "paper", "study", "author"
 }
 
+
+def _safe_parse_json_array(text: str) -> list:
+    """Parse a JSON array, recovering complete objects if the output was truncated."""
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        # Find the last complete object by locating the last '}' before the truncation
+        last_close = text.rfind("}")
+        if last_close == -1:
+            raise
+        truncated = text[:last_close + 1] + "]"
+        # Strip any trailing comma before the closing bracket
+        truncated = re.sub(r",\s*]", "]", truncated)
+        return json.loads(truncated)
+
 class LLMExtractor:
     def __init__(self, llm_client=None):
         self.llm_client = llm_client or self._default_client()
@@ -111,15 +126,14 @@ class LLMExtractor:
             if hasattr(self.llm_client, "generate_content"):
                 response = self.llm_client.generate_content(
                     prompt,
-                    generation_config=genai.types.GenerationConfig(max_output_tokens=2048),
+                    generation_config=genai.types.GenerationConfig(max_output_tokens=8192),
                 )
                 raw_text = response.text
             else:
                 raw_text = self.llm_client.generate(prompt)
 
-            # Clean potential markdown wrappers if the model ignores the instruction
             cleaned_text = re.sub(r"^```json\s*|\s*```$", "", raw_text.strip(), flags=re.IGNORECASE)
-            data = json.loads(cleaned_text)
+            data = _safe_parse_json_array(cleaned_text)
             
             triples = []
             for item in data:
@@ -164,13 +178,13 @@ class MultiPassLLMExtractor(LLMExtractor):
             response_text = (
                 self.llm_client.generate_content(
                     pass_two_prompt,
-                    generation_config=genai.types.GenerationConfig(max_output_tokens=2048),
+                    generation_config=genai.types.GenerationConfig(max_output_tokens=8192),
                 ).text
                 if hasattr(self.llm_client, "generate_content")
                 else self.llm_client.generate(pass_two_prompt)
             )
             cleaned_text = re.sub(r"^```json\s*|\s*```$", "", response_text.strip(), flags=re.IGNORECASE)
-            data = json.loads(cleaned_text)
+            data = _safe_parse_json_array(cleaned_text)
             
             triples = []
             for item in data:
