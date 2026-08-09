@@ -87,7 +87,7 @@ class LLMExtractor:
         self.llm_client = llm_client or self._default_client()
 
     def _default_client(self):
-        return genai.GenerativeModel(getattr(cfg, "GEMINI_MODEL", "gemini-1.5-flash"))
+        return genai.GenerativeModel(getattr(cfg, "GEMINI_MODEL", "gemini-2.5-flash"))
 
     def _build_context_prompt(self, text: str, metadata: dict) -> str:
         pub_date = metadata.get("publication_date", "Unknown")
