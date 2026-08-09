@@ -98,14 +98,13 @@ class KGMerger:
         if result:
             canonical = result["name"]
             score = result["score"]
-            logger.debug("Entity merge (Neo4j Vector): '%s' -> '%s' (sim=%.3f)", name.replace('\n', ' '), canonical.replace('\n', ' '), score)
+            logger.debug("Entity merge (Neo4j Vector): '%s' → '%s' (sim=%.3f)", name, canonical, score)
             return canonical
 
         return name
 
     # ── Triple upsert ─────────────────────────────────────────────────────────
 
-    # ── Triple upsert ─────────────────────────────────────────────────────────
 
     def upsert_triple(
         self,
