@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 class KGMerger:
     """
-    Merges entities and triples into Neo4j.
+    Merges entities and triples into Neo4j with automated vector indexing and clustering.
     """
 
     def __init__(self, driver: Driver):
@@ -33,6 +33,14 @@ class KGMerger:
         properties: dict | None = None,
     ) -> str:
         properties = properties or {}
+        
+        # Ensure embedding is generated and stored for vector indexing and clustering
+        if "embedding" not in properties:
+            try:
+                properties["embedding"] = _encode(name)[0].tolist()
+            except Exception as exc:
+                logger.debug("Entity embedding unavailable for '%s': %s", name, exc)
+
         canonical = self._resolve_entity(name, entity_type)
 
         cypher = """
@@ -71,7 +79,6 @@ class KGMerger:
         RETURN node.name AS name, score
         """
 
-        # We use cfg.ENTITY_MERGE_THRESHOLD for the cosine similarity cutoff
         try:
             with self.driver.session() as s:
                 result = s.run(
@@ -118,6 +125,48 @@ class KGMerger:
         """
         with self.driver.session() as s:
             s.run(cypher, subj=subj, obj=obj, pred=pred, src=source_paper, conf=confidence)
+
+    # ── Vector Similarity Clustering ──────────────────────────────────────────
+
+    def run_vector_clustering_job(self, threshold: float | None = None) -> int:
+        """
+        Scans the entity embedding index periodically to bridge concept silos
+        and merge semantic duplicates using APOC refactoring.
+        """
+        threshold = threshold or cfg.ENTITY_MERGE_THRESHOLD
+        query = """
+        MATCH (e1:Entity)
+        WHERE e1.embedding IS NOT NULL
+        CALL db.index.vector.queryNodes('entity_embedding', 5, e1.embedding)
+        YIELD node AS e2, score
+        WHERE e1 <> e2 AND e1.type = e2.type AND score >= $threshold
+        RETURN e1.name AS id1, e2.name AS id2, score
+        """
+        merged_count = 0
+        with self.driver.session() as s:
+            results = s.run(query, threshold=threshold)
+            for record in results:
+                name1, name2, score = record["id1"], record["id2"], record["score"]
+                if name1 != name2:
+                    logger.debug("Cluster merging: '%s' and '%s' (sim=%.3f)", name1, name2, score)
+                    self._merge_entities(name1, name2)
+                    merged_count += 1
+        return merged_count
+
+    def _merge_entities(self, primary_name: str, duplicate_name: str):
+        cypher = """
+        MATCH (p:Entity {name: $primary})
+        MATCH (d:Entity {name: $duplicate})
+        WHERE p <> d
+        CALL apoc.refactor.mergeNodes([p, d], {properties: 'combine', mergeRels: true})
+        YIELD node
+        RETURN node.name
+        """
+        with self.driver.session() as s:
+            try:
+                s.run(cypher, primary=primary_name, duplicate=duplicate_name)
+            except Exception as exc:
+                logger.warning("Failed to merge nodes '%s' and '%s': %s", primary_name, duplicate_name, exc)
 
     # ── Bulk operations ───────────────────────────────────────────────────────
 

@@ -66,38 +66,98 @@ BANNED_ENTITY_KEYWORDS = {
 }
 
 class LLMExtractor:
-    def __init__(self):
-        genai.configure(api_key=cfg.GEMINI_API_KEY)
-        self._model = genai.GenerativeModel(
-            model_name=cfg.LLM_MODEL,
-            system_instruction=_SYSTEM_PROMPT,
-        )
+    def __init__(self, llm_client=None):
+        self.llm_client = llm_client or self._default_client()
 
-    def extract(self, text: str, source_id: str = "") -> list[Triple]:
+    def _default_client(self):
+        return genai.GenerativeModel(getattr(cfg, "GEMINI_MODEL", "gemini-1.5-flash"))
+
+    def _build_context_prompt(self, text: str, metadata: dict) -> str:
+        pub_date = metadata.get("publication_date", "Unknown")
+        citations = metadata.get("citation_count", 0)
+        
+        system_context = (
+            f"--- PAPER METADATA ---\n"
+            f"Publication Date: {pub_date}\n"
+            f"Citation Count: {citations}\n"
+            f"----------------------\n\n"
+            f"Extract entities and high-signal semantic predicates from the text below. "
+            f"Incorporate the chronological context when mapping generational dependencies between models or techniques."
+        )
+        return f"{_SYSTEM_PROMPT}\n\n{system_context}\n\nText:\n{text}"
+
+    def extract(self, text: str, source_id: str = "", metadata: dict = None) -> list[Triple]:
+        metadata = metadata or {}
+        prompt = self._build_context_prompt(text, metadata)
+        
         try:
-            response = self._model.generate_content(text[:4000])
-            raw = response.text.strip()
-            # Strip accidental markdown fences
-            raw = re.sub(r"^```json\s*|```$", "", raw, flags=re.MULTILINE).strip()
-            items = json.loads(raw)
-            return [
-                Triple(
-                    subject=item["subject"],
-                    predicate=item["predicate"],
-                    obj=item["object"],
+            if hasattr(self.llm_client, "generate_content"):
+                response = self.llm_client.generate_content(prompt)
+                raw_text = response.text
+            else:
+                raw_text = self.llm_client.generate(prompt)
+
+            # Clean potential markdown wrappers if the model ignores the instruction
+            cleaned_text = re.sub(r"^```json\s*|\s*```$", "", raw_text.strip(), flags=re.IGNORECASE)
+            data = json.loads(cleaned_text)
+            
+            triples = []
+            for item in data:
+                triples.append(Triple(
+                    subject=item.get("subject", ""),
+                    predicate=item.get("predicate", "related_to"),
+                    obj=item.get("object", ""),
                     confidence=float(item.get("confidence", 1.0)),
                     source_id=source_id,
                     subject_type=item.get("subject_type", "Unknown"),
-                    obj_type=item.get("object_type", "Unknown"),
-                )
-                for item in items
-                if all(k in item for k in ("subject", "predicate", "object"))
-            ]
-        except (json.JSONDecodeError, KeyError, Exception) as exc:
+                    obj_type=item.get("obj_type", "Unknown")
+                ))
+            return triples
+        except Exception as exc:
             logger.warning("LLM extraction failed for %s: %s", source_id, exc)
             return []
 
+class MultiPassLLMExtractor(LLMExtractor):
+    def extract(self, text: str, source_id: str = "", metadata: dict = None) -> list[Triple]:
+        metadata = metadata or {}
+        
+        # Pass 1: Broad Candidate Extraction
+        pass_one_prompt = (
+            f"Pass 1: Extract all candidate entities (Models, Methods, Datasets, Metrics) "
+            f"and relationships from the following text as a JSON array.\n\nText:\n{text}"
+        )
+        raw_extraction = self.llm_client.generate_content(pass_one_prompt).text if hasattr(self.llm_client, "generate_content") else self.llm_client.generate(pass_one_prompt)
 
+        # Pass 2: Semantic Density Verification & Pruning
+        pass_two_prompt = (
+            f"{_SYSTEM_PROMPT}\n\n"
+            f"Pass 2: Review the following extracted candidates against the original text. "
+            f"Discard superficial co-occurrences, isolate multi-hop dependencies, and ensure "
+            f"only high-value structural contributions remain. Return ONLY the final JSON array.\n\n"
+            f"Candidates:\n{raw_extraction}\n\nOriginal Text:\n{text}"
+        )
+        
+        try:
+            response_text = self.llm_client.generate_content(pass_two_prompt).text if hasattr(self.llm_client, "generate_content") else self.llm_client.generate(pass_two_prompt)
+            cleaned_text = re.sub(r"^```json\s*|\s*```$", "", response_text.strip(), flags=re.IGNORECASE)
+            data = json.loads(cleaned_text)
+            
+            triples = []
+            for item in data:
+                triples.append(Triple(
+                    subject=item.get("subject", ""),
+                    predicate=item.get("predicate", "related_to"),
+                    obj=item.get("object", ""),
+                    confidence=float(item.get("confidence", 1.0)),
+                    source_id=source_id,
+                    subject_type=item.get("subject_type", "Unknown"),
+                    obj_type=item.get("obj_type", "Unknown")
+                ))
+            return triples
+        except Exception as exc:
+            logger.warning("Multi-pass extraction failed for %s: %s", source_id, exc)
+            return []
+    
 class RebelExtractor:
     """
     Uses the Babelscape/rebel-large model.
