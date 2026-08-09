@@ -25,7 +25,6 @@ class KGMerger:
         self.driver = driver
 
     # ── Entity upsert ─────────────────────────────────────────────────────────
-
     def upsert_entity(
         self,
         name: str,
@@ -44,9 +43,16 @@ class KGMerger:
         canonical = self._resolve_entity(name, entity_type)
 
         cypher = """
-        MERGE (e:Entity {name: $name, type: $type})
-        ON CREATE SET e += $props, e.created = timestamp(), e.mention_count = 1
-        ON MATCH  SET e += $props, e.updated = timestamp(), e.mention_count = coalesce(e.mention_count, 0) + 1
+        MERGE (e:Entity {name: $name})
+        ON CREATE SET 
+            e.type = $type,
+            e.created = timestamp(), 
+            e.mention_count = 1
+        ON MATCH SET 
+            e.type = COALESCE(e.type, $type),
+            e.updated = timestamp(), 
+            e.mention_count = coalesce(e.mention_count, 0) + 1
+        SET e += $props
         RETURN e.name AS name
         """
         with self.driver.session() as s:
@@ -101,6 +107,8 @@ class KGMerger:
 
     # ── Triple upsert ─────────────────────────────────────────────────────────
 
+    # ── Triple upsert ─────────────────────────────────────────────────────────
+
     def upsert_triple(
         self,
         subj: str,
@@ -108,24 +116,40 @@ class KGMerger:
         obj: str,
         source_paper: str,
         confidence: float = 1.0,
+        subj_type: str = "Unknown",
+        obj_type: str = "Unknown",
+        subj_props: dict | None = None,
+        obj_props: dict | None = None,
     ) -> None:
+        # Ensure both entities are fully upserted with their granular types and property payloads
+        self.upsert_entity(subj, subj_type, subj_props)
+        self.upsert_entity(obj, obj_type, obj_props)
+
         cypher = """
-        MERGE (s:Entity {name: $subj}) ON CREATE SET s.type = 'unknown', s.created = timestamp()
-        MERGE (o:Entity {name: $obj}) ON CREATE SET o.type = 'unknown', o.created = timestamp()
-        MERGE (s)-[r:RELATION {type: $pred}]->(o) ON CREATE SET
+        MATCH (s:Entity {name: $subj})
+        MATCH (o:Entity {name: $obj})
+        MERGE (s)-[r:RELATION {type: $pred}]->(o) 
+        ON CREATE SET
             r.sources       = [$src],
             r.confidence    = $conf,
             r.first_seen    = timestamp(),
             r.last_seen     = timestamp(),
-            r.mention_count = 1 ON MATCH SET
+            r.mention_count = 1 
+        ON MATCH SET 
             r.sources       = CASE WHEN $src IN r.sources THEN r.sources ELSE r.sources + $src END,
-            r.confidence    = (r.confidence * r.mention_count + $conf)/ (r.mention_count + 1),
+            r.confidence    = (r.confidence * r.mention_count + $conf) / (r.mention_count + 1),
             r.last_seen     = timestamp(),
             r.mention_count = r.mention_count + 1
         """
-        with self.driver.session() as s:
-            s.run(cypher, subj=subj, obj=obj, pred=pred, src=source_paper, conf=confidence)
-
+        with self.driver.session() as session:
+            session.run(
+                cypher,
+                subj=subj,
+                obj=obj,
+                pred=pred,
+                src=source_paper,
+                conf=confidence,
+            )
     # ── Vector Similarity Clustering ──────────────────────────────────────────
 
     def run_vector_clustering_job(self, threshold: float | None = None) -> int:

@@ -26,36 +26,43 @@ class Triple:
     source_id: str = ""
     subject_type: str = "unknown"
     obj_type: str = "unknown"
+    subject_props: dict = None
+    obj_props: dict = None
+
+    def __post_init__(self):
+        self.subject_props = self.subject_props or {}
+        self.obj_props = self.obj_props or {}
 
     def __repr__(self):
-        return f"({self.subject}) --[{self.predicate}]--> ({self.obj})"
+        return f"({self.subject}:{self.subject_type}) --[{self.predicate}]--> ({self.obj}:{self.obj_type})"
 
 
-_SYSTEM_PROMPT = """You are a scientific knowledge graph extractor.
-Given a text, extract factual (subject, predicate, object) triples.
+_SYSTEM_PROMPT = """You are an advanced scientific knowledge graph extractor.
+Given a text, extract factual (subject, predicate, object) triples and rich property payloads.
 
 Rules:
-- subjects and objects should be named entities
-- predicates should be specific verbs: proposes, outperforms, trained_on, 
-  published_by, cites, treats, uses_dataset, achieves_score_on, related_to,
-  introduces, evaluates, improves, builds_on
-- classify every subject and object into ONE of these types:
-    Method       — algorithms, techniques, approaches (RAG, LoRA, attention)
-    Model        — specific trained models (GPT-4, BERT, LLaMA)
-    Dataset      — datasets and benchmarks (SQuAD, MMLU, ImageNet)
-    Author       — person names (Lewis et al., Vaswani)
-    Organisation — companies/labs (OpenAI, Google DeepMind, Meta)
-    Metric       — evaluation metrics (BLEU, F1, perplexity, accuracy)
-    Concept      — abstract ideas (hallucination, grounding, fine-tuning)
-    Paper        — paper titles or paper references
-    Unknown      — if none of the above fit
-- return ONLY a valid JSON array, no markdown, no explanation
-- each element: {
+- Subjects and objects should be granular technical entities or mechanism components.
+- Predicates should be high-signal semantic verbs: replaces_component_with, introduces_training_objective, ameliorates_limitation_of, benchmarked_superior_to, proposes, uses_dataset, achieves_score_on, related_to.
+- Classify every subject and object into ONE of these granular architectural types:
+    ArchitecturalInnovation — structural design changes (e.g., Rotary Embedding, SwiGLU, Multi-Query Attention)
+    TrainingObjective       — loss formulations, pre-training tasks (e.g., Masked Language Modeling, DPO, RLHF)
+    LossFunction            — specific mathematical losses (e.g., Cross-Entropy, Contrastive Loss)
+    HardwareConstraint      — compute/memory constraints (e.g., Tensor Parallelism, FlashAttention-2)
+    Dataset                 — benchmarks and corpora (e.g., SQuAD, MMLU, CommonCrawl)
+    Metric                  — evaluation metrics (e.g., BLEU, Perplexity, Accuracy)
+    Concept                 — foundational abstract ideas (e.g., Hallucination, Weight Quantization)
+    Paper                   — publication references
+    Unknown                 — fallback type
+- Extract a "properties" dictionary for each node containing technical attributes (e.g., parameters, dimensions, brief operational summaries if mentioned).
+- Return ONLY a valid JSON array, no markdown, no explanation.
+- Each element format: {
     "subject": "...",
-    "subject_type": "Method|Model|Dataset|Author|Organisation|Metric|Concept|Paper|Unknown",
+    "subject_type": "ArchitecturalInnovation|TrainingObjective|LossFunction|HardwareConstraint|Dataset|Metric|Concept|Paper|Unknown",
+    "subject_properties": {"summary": "...", "parameters": "..."},
     "predicate": "...",
     "object": "...",
-    "object_type": "Method|Model|Dataset|Author|Organisation|Metric|Concept|Paper|Unknown",
+    "object_type": "ArchitecturalInnovation|TrainingObjective|LossFunction|HardwareConstraint|Dataset|Metric|Concept|Paper|Unknown",
+    "object_properties": {"summary": "...", "parameters": "..."},
     "confidence": 0.0-1.0
   }"""
 
@@ -110,7 +117,9 @@ class LLMExtractor:
                     confidence=float(item.get("confidence", 1.0)),
                     source_id=source_id,
                     subject_type=item.get("subject_type", "Unknown"),
-                    obj_type=item.get("obj_type", "Unknown")
+                    obj_type=item.get("obj_type", "Unknown"),
+                    subject_props=item.get("subject_properties", {}),
+                    obj_props=item.get("object_properties", {})
                 ))
             return triples
         except Exception as exc:
@@ -151,7 +160,9 @@ class MultiPassLLMExtractor(LLMExtractor):
                     confidence=float(item.get("confidence", 1.0)),
                     source_id=source_id,
                     subject_type=item.get("subject_type", "Unknown"),
-                    obj_type=item.get("obj_type", "Unknown")
+                    obj_type=item.get("obj_type", "Unknown"),
+                    subject_props=item.get("subject_properties", {}),
+                    obj_props=item.get("object_properties", {})
                 ))
             return triples
         except Exception as exc:
