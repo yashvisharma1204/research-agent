@@ -299,8 +299,8 @@ All endpoints are served via FastAPI with automatic OpenAPI documentation availa
 ## Frontend System Engineering & Graph Physics
 
 The frontend UI (`index.html`) is designed for high-throughput visualization without the runtime overhead of complex JavaScript frameworks.
+<img width="1512" height="827" alt="image" src="https://github.com/user-attachments/assets/1c261f2e-bde3-4190-bc87-6bbfbfb6f8b4" />
 
-<img width="1512" height="855" alt="Screenshot 2026-08-09 at 2 10 16 PM" src="https://github.com/user-attachments/assets/fe6ec5d7-09ef-4609-8cb9-10045c5227da" />
 
 
 ### 1. Bento UI Architecture
