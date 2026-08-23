@@ -37,20 +37,13 @@ logger = logging.getLogger(__name__)
 security = HTTPBasic()
 
 def verify_yashvi(credentials: HTTPBasicCredentials = Depends(security)):
-    """Verifies that the username is 'Yashvi' and password matches INGESTION_PASSWORD."""
-    current_username_bytes = credentials.username.encode("utf8")
-    correct_username_bytes = b"Yashvi"
-    
-    current_password_bytes = credentials.password.encode("utf8")
     correct_password_bytes = os.getenv("INGESTION_PASSWORD", "fallback_secret_key").strip('"').encode("utf8")
-    
-    is_correct_username = secrets.compare_digest(current_username_bytes, correct_username_bytes)
-    is_correct_password = secrets.compare_digest(current_password_bytes, correct_password_bytes)
-    
-    if not (is_correct_username and is_correct_password):
+    is_correct_password = secrets.compare_digest(credentials.password.encode("utf8"), correct_password_bytes)
+
+    if not is_correct_password:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Access restricted. Only Yashvi can perform data ingestion.",
+            detail="Access restricted. Invalid ingestion password.",
             headers={"WWW-Authenticate": "Basic"},
         )
     return credentials.username
