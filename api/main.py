@@ -42,7 +42,7 @@ def verify_yashvi(credentials: HTTPBasicCredentials = Depends(security)):
     correct_username_bytes = b"Yashvi"
     
     current_password_bytes = credentials.password.encode("utf8")
-    correct_password_bytes = os.getenv("INGESTION_PASSWORD", "fallback_secret_key").encode("utf8")
+    correct_password_bytes = os.getenv("INGESTION_PASSWORD", "fallback_secret_key").strip('"').encode("utf8")
     
     is_correct_username = secrets.compare_digest(current_username_bytes, correct_username_bytes)
     is_correct_password = secrets.compare_digest(current_password_bytes, correct_password_bytes)
