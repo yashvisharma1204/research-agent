@@ -10,11 +10,12 @@ import logging
 import math
 from typing import NamedTuple
 from neo4j import Driver
-import google.generativeai as genai
+from google.genai import types
 
 from config import cfg, get_predicate_weight
 from rag.router import route_query
 from utils.embedder import encode as _encode
+from utils.gemini import get_client
 
 logger = logging.getLogger(__name__)
 
@@ -39,25 +40,34 @@ class RetrievalContext(NamedTuple):
     graph_triples: list[GraphTriple]
     vector_results: list[VectorResult]
     entity_names: list[str]
-    paper_abstracts: list[str] = [] 
+    paper_abstracts: tuple[str, ...] = ()
     route: str = "hybrid"
 
 
 # ── Unified Graph & Vector Retriever ──────────────────────────────────────────
 
 class GraphRetriever:
+    _EXTRACTOR_SYSTEM = (
+        "You are an entity extractor for a knowledge graph. Extract the core "
+        "technical concepts, AI models, or frameworks from the query. Return "
+        "ONLY a comma-separated list of terms. Do not include markdown, "
+        "explanations, or quotes."
+    )
+
     def __init__(self, driver: Driver):
         self.driver = driver
-        genai.configure(api_key=cfg.GEMINI_API_KEY)
-        self._extractor_model = genai.GenerativeModel(
-            model_name=cfg.LLM_MODEL,
-            system_instruction="You are an entity extractor for a knowledge graph. Extract the core technical concepts, AI models, or frameworks from the query. Return ONLY a comma-separated list of terms. Do not include markdown, explanations, or quotes."
-        )
+        self._client = get_client()
 
     def extract_entities_from_query(self, query: str) -> list[str]:
         """Uses Gemini to intelligently extract entities instead of regex."""
         try:
-            response = self._extractor_model.generate_content(query)
+            response = self._client.models.generate_content(
+                model=cfg.LLM_MODEL,
+                contents=query,
+                config=types.GenerateContentConfig(
+                    system_instruction=self._EXTRACTOR_SYSTEM,
+                ),
+            )
             if response.text:
                 entities = [e.strip() for e in response.text.split(",") if e.strip()]
                 logger.debug("Gemini extracted entities: %s", entities)
@@ -162,9 +172,8 @@ class GraphRetriever:
         """Queries the Native Neo4j vector index."""
         q_emb = _encode([query])[0].tolist()
         cypher = """
-        MATCH (node)
-        SEARCH node IN (VECTOR INDEX entity_embedding FOR $embedding LIMIT $k)
-        SCORE AS score
+        CALL db.index.vector.queryNodes('entity_embedding', $k, $embedding)
+        YIELD node, score
         RETURN node.text AS text, score, node.name AS doc_id
         """
         try:
@@ -223,7 +232,7 @@ class Retriever:
             graph_triples=graph_triples,
             vector_results=vector_results,
             entity_names=entity_names,
-            paper_abstracts=paper_abstracts, 
+            paper_abstracts=tuple(paper_abstracts),
             route=route,
         )
 

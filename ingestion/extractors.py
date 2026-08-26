@@ -10,9 +10,9 @@ import logging
 import re
 from dataclasses import dataclass
 from typing import Protocol
-import google.generativeai as genai
 
 from config import cfg
+from utils.gemini import get_client
 
 logger = logging.getLogger(__name__)
 
@@ -24,8 +24,8 @@ class Triple:
     obj: str
     confidence: float = 1.0
     source_id: str = ""
-    subject_type: str = "unknown"
-    obj_type: str = "unknown"
+    subject_type: str = "Unknown"
+    obj_type: str = "Unknown"
     subject_props: dict = None
     obj_props: dict = None
     temporal_rationale: str = ""  # <--- Added temporal rationale property
@@ -99,10 +99,27 @@ def _safe_parse_json_array(text: str) -> list:
 
 class LLMExtractor:
     def __init__(self, llm_client=None):
-        self.llm_client = llm_client or self._default_client()
+        # `llm_client` may be injected (e.g. in tests) exposing a `.generate(prompt)`
+        # method. By default we use the shared google-genai client.
+        self.llm_client = llm_client
+        self._client = None if llm_client is not None else get_client()
 
-    def _default_client(self):
-        return genai.GenerativeModel(getattr(cfg, "GEMINI_MODEL", "gemini-2.5-flash"))
+    def _generate(self, prompt: str, max_output_tokens: int = 8192) -> str:
+        """Run a single generation and return the raw text."""
+        from google.genai import types
+
+        if self.llm_client is not None:
+            # Custom injected client (test/mocks).
+            if hasattr(self.llm_client, "generate_content"):
+                return self.llm_client.generate_content(prompt).text
+            return self.llm_client.generate(prompt)
+
+        response = self._client.models.generate_content(
+            model=getattr(cfg, "LLM_MODEL", "gemini-2.5-flash"),
+            contents=prompt,
+            config=types.GenerateContentConfig(max_output_tokens=max_output_tokens),
+        )
+        return response.text or ""
 
     def _build_context_prompt(self, text: str, metadata: dict) -> str:
         pub_date = metadata.get("publication_date", "Unknown")
@@ -123,14 +140,7 @@ class LLMExtractor:
         prompt = self._build_context_prompt(text, metadata)
         
         try:
-            if hasattr(self.llm_client, "generate_content"):
-                response = self.llm_client.generate_content(
-                    prompt,
-                    generation_config=genai.types.GenerationConfig(max_output_tokens=8192),
-                )
-                raw_text = response.text
-            else:
-                raw_text = self.llm_client.generate(prompt)
+            raw_text = self._generate(prompt, max_output_tokens=8192)
 
             cleaned_text = re.sub(r"^```json\s*|\s*```$", "", raw_text.strip(), flags=re.IGNORECASE)
             data = _safe_parse_json_array(cleaned_text)
@@ -163,7 +173,7 @@ class MultiPassLLMExtractor(LLMExtractor):
             f"Pass 1: Extract all candidate entities (Models, Methods, Datasets, Metrics) "
             f"and relationships from the following text as a JSON array.\n\nText:\n{text}"
         )
-        raw_extraction = self.llm_client.generate_content(pass_one_prompt).text if hasattr(self.llm_client, "generate_content") else self.llm_client.generate(pass_one_prompt)
+        raw_extraction = self._generate(pass_one_prompt)
 
         # Pass 2: Semantic Density Verification & Pruning
         pass_two_prompt = (
@@ -175,14 +185,7 @@ class MultiPassLLMExtractor(LLMExtractor):
         )
         
         try:
-            response_text = (
-                self.llm_client.generate_content(
-                    pass_two_prompt,
-                    generation_config=genai.types.GenerationConfig(max_output_tokens=8192),
-                ).text
-                if hasattr(self.llm_client, "generate_content")
-                else self.llm_client.generate(pass_two_prompt)
-            )
+            response_text = self._generate(pass_two_prompt, max_output_tokens=8192)
             cleaned_text = re.sub(r"^```json\s*|\s*```$", "", response_text.strip(), flags=re.IGNORECASE)
             data = _safe_parse_json_array(cleaned_text)
             
@@ -358,7 +361,7 @@ def is_high_quality_entity(entity_name: str) -> bool:
             logger.debug("Entity filtered (banned descriptor matched '%s'): '%s'", phrase, clean_name)
             return False
             
-    return type(clean_name) is str
+    return True
 
 
 def extract_triples(text: str, source_id: str = "", published_date: str = "Unknown") -> list[Triple]:

@@ -10,7 +10,7 @@ load_dotenv()
 
 class Config:
     # Gemini
-    GEMINI_API_KEY: str = os.environ["GEMINI_API_KEY"]
+    GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
     LLM_MODEL: str = "gemini-2.5-flash"                 # free-tier friendly
 
     # Neo4j
@@ -42,6 +42,15 @@ class Config:
 
 
 cfg = Config()
+
+if not cfg.GEMINI_API_KEY:
+    import logging as _logging
+
+    _logging.getLogger(__name__).warning(
+        "GEMINI_API_KEY is not set. LLM-backed features (routing, extraction, "
+        "synthesis, summaries) will fail until it is configured in the environment "
+        "or .env file."
+    )
 
 # High-signal semantic predicates & weighting for Layer 3 Graph Traversal
 HIGH_SIGNAL_PREDICATES = {

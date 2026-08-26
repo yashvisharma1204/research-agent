@@ -424,15 +424,17 @@ def fetch_foundational(topic: str, max_results: int = 10) -> list[dict]:
     topic_clean = original_topic.lower().strip()
     results: list[dict] = []
 
-    # Strict routing: Only trigger exact title lookup if explicitly wrapped in quotes or an ID
-    if _is_exact_paper_query(original_topic):
+    # 1. Title-first routing: explicit identifiers (quoted / arXiv ID) and
+    #    queries that look like a concrete paper title resolve via title lookup.
+    if _is_exact_paper_query(original_topic) or _looks_like_paper_title(original_topic):
         clean_title = original_topic.strip('"')
-        logger.info("Treating '%s' as an exact paper title or ID", clean_title)
+        logger.info("Treating '%s' as a paper title or ID", clean_title)
         results = fetch_by_title(clean_title, max_results)
         if results:
             _cache[cache_key] = results
             return results
 
+    # 2. Known concept aliases resolve to curated foundational reading lists.
     alias_key = TOPIC_ALIASES.get(topic_clean)
     for key in list(FOUNDATIONAL_PAPERS.keys()):
         if alias_key and key == alias_key:

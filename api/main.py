@@ -18,7 +18,7 @@ from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-import google.generativeai as genai
+from google.genai import types
 
 from config import cfg
 from graph.merger import KGMerger
@@ -27,6 +27,7 @@ from ingestion.extractors import extract_triples
 from ingestion.fetchers import fetch_foundational
 from rag.retriever import Retriever
 from rag.synthesiser import Synthesiser
+from utils.gemini import get_client
 import os
 import secrets
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
@@ -37,10 +38,22 @@ logger = logging.getLogger(__name__)
 security = HTTPBasic()
 
 def verify_yashvi(credentials: HTTPBasicCredentials = Depends(security)):
-    correct_password_bytes = os.getenv("INGESTION_PASSWORD", "fallback_secret_key").strip('"').encode("utf8")
-    is_correct_password = secrets.compare_digest(credentials.password.encode("utf8"), correct_password_bytes)
+    expected_password = os.getenv("INGESTION_PASSWORD")
 
-    if not is_correct_password:
+    # Fail closed: if no password is configured, ingestion is disabled rather
+    # than protected by a well-known hardcoded fallback secret.
+    if not expected_password:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Ingestion is disabled: INGESTION_PASSWORD is not configured.",
+        )
+
+    expected_password_bytes = expected_password.strip('"').encode("utf8")
+    supplied_password_bytes = (credentials.password or "").encode("utf8")
+
+    # Password-only auth: the HTTP Basic username field is ignored; only the
+    # password is validated, using a constant-time comparison.
+    if not secrets.compare_digest(supplied_password_bytes, expected_password_bytes):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Access restricted. Invalid ingestion password.",
@@ -65,6 +78,9 @@ async def lifespan(app: FastAPI):
     logger.info("Research agent ready")
     yield
     driver.close()
+    # Clear the cached driver so a subsequent startup (e.g. --reload) creates a
+    # fresh, open driver instead of returning this now-closed instance.
+    get_driver.cache_clear()
 
 
 app = FastAPI(
@@ -74,10 +90,18 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# CORS origins are configurable via env (comma-separated). Browsers reject the
+# combination of wildcard origin + credentials, so only enable credentials when
+# explicit origins are provided.
+_cors_origins = [
+    o.strip() for o in os.getenv("CORS_ALLOW_ORIGINS", "*").split(",") if o.strip()
+]
+_allow_credentials = _cors_origins != ["*"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=_cors_origins,
+    allow_credentials=_allow_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -144,14 +168,13 @@ def generate_paper_summary(paper_title: str, text: str, relations: list) -> str:
     Connected Graph Relations: {relations[:15]}
     """
     
-    genai.configure(api_key=cfg.GEMINI_API_KEY)
-    gemini_model = genai.GenerativeModel(model_name=cfg.LLM_MODEL)
-    
-    response = gemini_model.generate_content(
-        prompt,
-        generation_config=genai.types.GenerationConfig(max_output_tokens=512),
+    gemini_client = get_client()
+    response = gemini_client.models.generate_content(
+        model=cfg.LLM_MODEL,
+        contents=prompt,
+        config=types.GenerateContentConfig(max_output_tokens=512),
     )
-    return response.text.strip()
+    return (response.text or "").strip()
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
@@ -345,12 +368,13 @@ async def get_ingestion_history():
     cypher = """
     MATCH (e:Entity)
     WHERE e.text IS NOT NULL
-    RETURN DISTINCT 
-        e.name AS title, 
-        e.type AS type, 
-        size(e.text) AS text_length,
-        e.published_date AS published_date
-    ORDER BY title DESC
+    RETURN DISTINCT
+        e.name AS title,
+        e.type AS type,
+        size(coalesce(e.text, '')) AS text_length,
+        e.published_date AS published_date,
+        coalesce(e.created, e.updated, 0) AS created
+    ORDER BY created DESC, title ASC
     LIMIT 20
     """
     try:

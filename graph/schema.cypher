@@ -1,15 +1,18 @@
-// schema.cypher — run once to set up Neo4j constraints and indexes
+// schema.cypher — run once to set up Neo4j constraints and indexes.
+// This mirrors SCHEMA_STATEMENTS in graph/neo4j_client.py.
 
-// Uniqueness constraints (also implicitly create indexes)
-CREATE CONSTRAINT entity_name_type IF NOT EXISTS
-FOR (e:Entity) REQUIRE (e.name, e.type) IS UNIQUE;
+// Canonical entity name uniqueness. Entities are MERGEd on `name` only,
+// so the unique key is `name` (not the (name, type) pair).
+CREATE CONSTRAINT entity_name IF NOT EXISTS
+FOR (e:Entity) REQUIRE e.name IS UNIQUE;
 
-CREATE CONSTRAINT paper_id IF NOT EXISTS
-FOR (p:Paper) REQUIRE p.url IS UNIQUE;
+// Index on entity type for fast type-filtered queries and stats.
+CREATE INDEX entity_type_idx IF NOT EXISTS
+FOR (e:Entity) ON (e.type);
 
 // Full-text index for fuzzy entity search
 CREATE FULLTEXT INDEX entity_fulltext IF NOT EXISTS
-FOR (n:Entity) ON EACH [n.name];
+FOR (e:Entity) ON EACH [e.name];
 
 // Range index on confidence for fast triple filtering
 CREATE INDEX relation_confidence IF NOT EXISTS
@@ -19,11 +22,10 @@ FOR ()-[r:RELATION]-() ON (r.confidence);
 CREATE INDEX relation_last_seen IF NOT EXISTS
 FOR ()-[r:RELATION]-() ON (r.last_seen);
 
-// Optional: Neo4j 5.11+ native vector index. If this is unavailable,
-// entity matching still works via exact-name matching and fallback behavior.
-// CREATE VECTOR INDEX entity_embedding IF NOT EXISTS
-// FOR (e:Entity) ON (e.embedding)
-// OPTIONS {indexConfig: {
-//   `vector.dimensions`: 384,
-//   `vector.similarity_function`: 'cosine'
-// }};
+// Neo4j 5.11+ native vector index (384-dim, cosine — matches all-MiniLM-L6-v2).
+CREATE VECTOR INDEX entity_embedding IF NOT EXISTS
+FOR (e:Entity) ON (e.embedding)
+OPTIONS {indexConfig: {
+  `vector.dimensions`: 384,
+  `vector.similarity_function`: 'cosine'
+}};

@@ -1134,7 +1134,7 @@ function renderGraph(nodes, links) {
     .attr('r', d => nodeR(d.type, d.mention_count))
     .attr('fill', d => d._color.bg)
     .attr('stroke', d => d._color.border)
-    .attr('stroke-width', 1.5);
+    .attr('stroke-width', 2.5);
 
   nodeSel.append('circle')
     .attr('class', 'node-inner-dot')

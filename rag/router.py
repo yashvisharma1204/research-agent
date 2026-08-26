@@ -12,9 +12,10 @@ from __future__ import annotations
 
 import logging
 
-import google.generativeai as genai
+from google.genai import types
 
 from config import cfg
+from utils.gemini import get_client
 
 logger = logging.getLogger(__name__)
 
@@ -40,20 +41,20 @@ _ROUTER_SYSTEM = """You are a query router for a research knowledge graph.
 
 class QueryRouter:
     def __init__(self):
-        genai.configure(api_key=cfg.GEMINI_API_KEY)
-        self._model = genai.GenerativeModel(
-            model_name=cfg.LLM_MODEL,
-            system_instruction=_ROUTER_SYSTEM,
-        )
+        self._client = get_client()
 
     def route(self, query: str) -> RouteType:
         """Return the route type for *query*."""
         try:
-            response = self._model.generate_content(
-                query[:500],
-                generation_config=genai.types.GenerationConfig(max_output_tokens=10),
+            response = self._client.models.generate_content(
+                model=cfg.LLM_MODEL,
+                contents=query[:500],
+                config=types.GenerateContentConfig(
+                    system_instruction=_ROUTER_SYSTEM,
+                    max_output_tokens=10,
+                ),
             )
-            route = response.text.strip().lower()
+            route = (response.text or "").strip().lower()
             if route in ("cypher", "vector", "hybrid"):
                 logger.debug("Router: '%s' → %s", query[:60], route)
                 return route

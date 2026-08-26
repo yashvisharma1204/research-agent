@@ -17,16 +17,25 @@ logger = logging.getLogger(__name__)
 # ── Schema Cypher ─────────────────────────────────────────────────────────────
 
 SCHEMA_STATEMENTS = [
-    # Uniqueness constraints (also create indexes)
-    "CREATE CONSTRAINT entity_name_type IF NOT EXISTS "
-    "FOR (e:Entity) REQUIRE (e.name, e.type) IS UNIQUE",
+    # Canonical entity name uniqueness. The merger MERGEs on `name` only, so the
+    # unique key must be `name` (not the (name, type) pair) to stay consistent.
+    "CREATE CONSTRAINT entity_name IF NOT EXISTS "
+    "FOR (e:Entity) REQUIRE e.name IS UNIQUE",
 
-    "CREATE CONSTRAINT paper_id IF NOT EXISTS "
-    "FOR (p:Paper) REQUIRE p.url IS UNIQUE",
+    # Index on entity type for fast type-filtered queries and stats.
+    "CREATE INDEX entity_type_idx IF NOT EXISTS "
+    "FOR (e:Entity) ON (e.type)",
 
     # Full-text index for fuzzy entity search
     "CREATE FULLTEXT INDEX entity_fulltext IF NOT EXISTS "
     "FOR (e:Entity) ON EACH [e.name]",
+
+    # Range indexes on relation properties for fast filtering / time queries.
+    "CREATE INDEX relation_confidence IF NOT EXISTS "
+    "FOR ()-[r:RELATION]-() ON (r.confidence)",
+
+    "CREATE INDEX relation_last_seen IF NOT EXISTS "
+    "FOR ()-[r:RELATION]-() ON (r.last_seen)",
 
     # Neo4j Native Vector Index
     "CREATE VECTOR INDEX entity_embedding IF NOT EXISTS "

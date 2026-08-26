@@ -3,15 +3,16 @@ rag/synthesiser.py
 Layer 4 Upgraded: Synthesises answers with a built-in Self-Correction & Faithfulness Audit Loop.
 """
 from __future__ import annotations
-from google.api_core import exceptions
 import logging
 from dataclasses import dataclass, field
 import json
 
-import google.generativeai as genai
+from google.genai import types
+from google.genai import errors as genai_errors
 
 from config import cfg
 from rag.retriever import RetrievalContext
+from utils.gemini import get_client
 
 logger = logging.getLogger(__name__)
 
@@ -79,15 +80,7 @@ class Answer:
 
 class Synthesiser:
     def __init__(self):
-        genai.configure(api_key=cfg.GEMINI_API_KEY)
-        self._model = genai.GenerativeModel(
-            model_name=cfg.LLM_MODEL,
-            system_instruction=_SYSTEM_PROMPT,
-        )
-        self._auditor_model = genai.GenerativeModel(
-            model_name=cfg.LLM_MODEL,
-            system_instruction=_AUDIT_SYSTEM_PROMPT,
-        )
+        self._client = get_client()
 
     def answer(self, question: str, context: RetrievalContext) -> Answer:
         try: 
@@ -99,6 +92,10 @@ class Synthesiser:
 
             {_format_vector(context.vector_results)}
 
+            ## Source abstracts for entities on the retrieved paths
+
+            {chr(10).join(context.paper_abstracts) if context.paper_abstracts else 'No source abstracts found.'}
+
             ## Seed entities found in your question
 
             {', '.join(context.entity_names) if context.entity_names else 'none detected'}
@@ -108,11 +105,15 @@ class Synthesiser:
             Question: {question}"""
 
             # 1. Initial Generation Pass
-            response = self._model.generate_content(
-                prompt,
-                generation_config=genai.types.GenerationConfig(max_output_tokens=2048),
+            response = self._client.models.generate_content(
+                model=cfg.LLM_MODEL,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    system_instruction=_SYSTEM_PROMPT,
+                    max_output_tokens=2048,
+                ),
             )
-            answer_text = response.text.strip()
+            answer_text = (response.text or "").strip()
             logger.info("Initial synthesis complete (%d chars)", len(answer_text))
 
             # 2. Layer 4 Self-Correction Audit Pass
@@ -131,14 +132,16 @@ class Synthesiser:
             critique_notes = "None"
 
             try:
-                audit_res = self._auditor_model.generate_content(
-                    audit_prompt,
-                    generation_config=genai.types.GenerationConfig(
+                audit_res = self._client.models.generate_content(
+                    model=cfg.LLM_MODEL,
+                    contents=audit_prompt,
+                    config=types.GenerateContentConfig(
+                        system_instruction=_AUDIT_SYSTEM_PROMPT,
                         max_output_tokens=512,
                         response_mime_type="application/json",
                     ),
                 )
-                audit_data = json.loads(audit_res.text.strip())
+                audit_data = json.loads((audit_res.text or "").strip())
                 is_faithful = audit_data.get("is_faithful", True)
                 critique_notes = audit_data.get("critique", "None")
 
@@ -159,24 +162,28 @@ class Synthesiser:
                 critique_notes=critique_notes,
             )
 
-        except exceptions.ResourceExhausted:
-            logger.error("Gemini API Quota Exceeded!")
-            return Answer(
-                question=question,
-                answer="⚠️ API Quota Reached. Please wait a minute.",
-                entity_seeds=[], graph_triple_count=0, vector_result_count=0, model="Gemini", is_faithful=False, critique_notes="Rate Limit"
-            )
-        except exceptions.NotFound:
-            logger.error("Gemini Model Not Found! Check model string.")
-            return Answer(
-                question=question,
-                answer="⚠️ Model deprecated. Please ensure the backend is using 'gemini-2.5-flash'.",
-                entity_seeds=[], graph_triple_count=0, vector_result_count=0, model="Gemini", is_faithful=False, critique_notes="Model Not Found"
-            )
-        except exceptions.GoogleAPICallError as e:
+        except genai_errors.APIError as e:
+            code = getattr(e, "code", None)
+            if code == 429:
+                logger.error("Gemini API Quota Exceeded!")
+                return Answer(
+                    question=question,
+                    answer="⚠️ API Quota Reached. Please wait a minute.",
+                    entity_seeds=[], graph_triple_count=0, vector_result_count=0,
+                    model="Gemini", is_faithful=False, critique_notes="Rate Limit",
+                )
+            if code == 404:
+                logger.error("Gemini Model Not Found! Check model string.")
+                return Answer(
+                    question=question,
+                    answer="⚠️ Model deprecated. Please ensure the backend is using 'gemini-2.5-flash'.",
+                    entity_seeds=[], graph_triple_count=0, vector_result_count=0,
+                    model="Gemini", is_faithful=False, critique_notes="Model Not Found",
+                )
             logger.error("Google API Error: %s", e)
             return Answer(
                 question=question,
                 answer="⚠️ Google API Connection Error.",
-                entity_seeds=[], graph_triple_count=0, vector_result_count=0, model="Gemini", is_faithful=False, critique_notes=str(e)
+                entity_seeds=[], graph_triple_count=0, vector_result_count=0,
+                model="Gemini", is_faithful=False, critique_notes=str(e),
             )
