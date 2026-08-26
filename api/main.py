@@ -243,14 +243,7 @@ async def ingest_arxiv_endpoint(req: IngestURLRequest):
             "text": doc["abstract"],
         })
 
-        for t in triples:
-            merger.upsert_entity(t.subject, t.subject_type, t.subject_props)
-            merger.upsert_entity(t.obj, t.obj_type, t.obj_props)
-            merger.upsert_triple(
-                t.subject, t.predicate, t.obj, doc["id"], t.confidence,
-                subj_type=t.subject_type, obj_type=t.obj_type,
-                subj_props=t.subject_props, obj_props=t.obj_props,
-            )
+        merger.upsert_document_triples(triples, doc["id"])
 
         retriever.index_document(doc)
         total_triples += len(triples)
@@ -277,14 +270,7 @@ async def ingest_text_endpoint(req: IngestTextRequest):
         "published_date": req.published_date,
     })
     
-    for t in triples:
-        merger.upsert_entity(t.subject, t.subject_type, t.subject_props)
-        merger.upsert_entity(t.obj, t.obj_type, t.obj_props)
-        merger.upsert_triple(
-            t.subject, t.predicate, t.obj, doc_id, t.confidence,
-            subj_type=t.subject_type, obj_type=t.obj_type,
-            subj_props=t.subject_props, obj_props=t.obj_props,
-        )
+    merger.upsert_document_triples(triples, doc_id)
 
     # Pass the date into the vector database
     retriever.index_document({

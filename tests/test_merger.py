@@ -32,3 +32,119 @@ def test_resolve_entity_falls_back_when_vector_query_fails(monkeypatch):
     entity_name = merger._resolve_entity("Alpha", "Person")
 
     assert entity_name == "Alpha"
+
+
+class _Triple:
+    """Minimal stand-in for ingestion.extractors.Triple."""
+
+    def __init__(self, subject, predicate, obj, subject_type="Concept", obj_type="Concept"):
+        self.subject = subject
+        self.predicate = predicate
+        self.obj = obj
+        self.confidence = 1.0
+        self.subject_type = subject_type
+        self.obj_type = obj_type
+        self.subject_props = {}
+        self.obj_props = {}
+
+
+class _RecordingDriver:
+    """Fake driver that records upserted entity names and written triples.
+
+    Every entity resolution query returns no exact match and no vector match,
+    so resolution falls back to the passed-in name — isolating the in-memory
+    dedup logic under test.
+    """
+
+    def __init__(self):
+        self.upserted_names = []
+        self.triples = []
+
+    def session(self):
+        driver = self
+
+        class _Session:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def run(self, cypher, **kw):
+                if cypher.strip().startswith("MATCH (e:Entity {name:"):
+                    # exact-match lookup -> miss
+                    return type("R", (), {"single": lambda self: None})()
+                if "db.index.vector.queryNodes" in cypher:
+                    # fuzzy vector lookup against existing graph -> miss
+                    return type("R", (), {"single": lambda self: None})()
+                if cypher.strip().startswith("MERGE (e:Entity"):
+                    driver.upserted_names.append(kw["name"])
+                    name = kw["name"]
+                    return type("R", (), {"single": lambda self: {"name": name}})()
+                if "MERGE (s)-[r:RELATION" in cypher:
+                    driver.triples.append((kw["subj"], kw["pred"], kw["obj"]))
+                    return type("R", (), {"single": lambda self: None})()
+                raise AssertionError(f"unexpected cypher: {cypher[:40]}")
+
+        return _Session()
+
+
+def test_batched_exact_dedup_encodes_uniques_once(monkeypatch):
+    """A concept repeated across triples is encoded/upserted once (exact dedup)."""
+    encode_calls = []
+
+    def fake_encode(names):
+        encode_calls.append(list(names))
+        return np.eye(len(names), dtype="float32")  # orthogonal -> no fuzzy merge
+
+    monkeypatch.setattr("graph.merger._encode", fake_encode)
+    driver = _RecordingDriver()
+    merger = KGMerger(driver)
+
+    triples = [
+        _Triple("BERT", "uses", "Attention"),
+        _Triple("BERT", "improves", "GLUE"),  # BERT repeats
+    ]
+    written = merger.upsert_document_triples(triples, "doc1")
+
+    assert written == 2
+    # One batched encode call covering the 3 unique names.
+    assert len(encode_calls) == 1
+    assert sorted(encode_calls[0]) == ["Attention", "BERT", "GLUE"]
+    # BERT upserted once despite appearing in two triples.
+    assert driver.upserted_names.count("BERT") == 1
+    assert sorted(driver.upserted_names) == ["Attention", "BERT", "GLUE"]
+    assert len(driver.triples) == 2
+
+
+def test_batched_fuzzy_dedup_collapses_new_near_duplicates(monkeypatch):
+    """Two brand-new near-duplicate names in one doc collapse to one node."""
+
+    # Give the two LLM variants near-identical vectors (cosine ~1.0) and a
+    # distinct vector for the object.
+    vecs = {
+        "Large Language Models": np.array([1.0, 0.0], dtype="float32"),
+        "large language model": np.array([0.999, 0.0447], dtype="float32"),
+        "Reasoning": np.array([0.0, 1.0], dtype="float32"),
+    }
+
+    def fake_encode(names):
+        return np.stack([vecs[n] for n in names])
+
+    monkeypatch.setattr("graph.merger._encode", fake_encode)
+    driver = _RecordingDriver()
+    merger = KGMerger(driver)
+
+    triples = [
+        _Triple("Large Language Models", "enable", "Reasoning"),
+        _Triple("large language model", "enable", "Reasoning"),
+    ]
+    written = merger.upsert_document_triples(triples, "doc2")
+
+    assert written == 2
+    # The two LLM variants collapsed: only the first-seen canonical is upserted.
+    assert "Large Language Models" in driver.upserted_names
+    assert "large language model" not in driver.upserted_names
+    # Both triples reference the canonical subject.
+    subjects = {s for (s, _, _) in driver.triples}
+    assert subjects == {"Large Language Models"}

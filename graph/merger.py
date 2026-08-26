@@ -30,15 +30,27 @@ class KGMerger:
         name: str,
         entity_type: str,
         properties: dict | None = None,
+        embedding: list[float] | None = None,
     ) -> str:
+        """Upsert a single entity.
+
+        *embedding* is an optional precomputed name embedding (as a plain list of
+        floats). Passing it avoids re-encoding the name — used by the batched
+        document path so every unique name is encoded at most once per document.
+        """
         props = dict(properties) if properties else {}
-        canonical = self._resolve_entity(name, entity_type) or name
+        canonical = self._resolve_entity(name, entity_type, embedding=embedding) or name
         # Name-only embedding used exclusively for entity resolution / clustering.
         # Retrieval embeddings live on :Chunk nodes, not here — keeping them apart
         # prevents name-similarity and passage-similarity from polluting each other.
         if "name_embedding" not in props:
             try:
-                props["name_embedding"] = _encode(canonical)[0].tolist()
+                # Reuse the precomputed vector when we resolved back to the same
+                # name; otherwise encode the canonical form once.
+                if embedding is not None and canonical == name:
+                    props["name_embedding"] = embedding
+                else:
+                    props["name_embedding"] = _encode([canonical])[0].tolist()
             except Exception as exc:
                 logger.debug("Entity name embedding unavailable for '%s': %s", canonical, exc)
 
@@ -60,7 +72,12 @@ class KGMerger:
             record = result.single()
             return record["name"] if record else canonical
 
-    def _resolve_entity(self, name: str, entity_type: str) -> str:
+    def _resolve_entity(
+        self,
+        name: str,
+        entity_type: str,
+        embedding: list[float] | None = None,
+    ) -> str:
         # 1. Check for an exact match first (fastest)
         with self.driver.session() as s:
             exact = s.run(
@@ -70,9 +87,9 @@ class KGMerger:
             if exact:
                 return name
 
-        # 2. Generate embedding for the new entity name using your embedder
+        # 2. Generate embedding for the new entity name (reuse precomputed if given)
         try:
-            query_emb = _encode(name)[0].tolist()
+            query_emb = embedding if embedding is not None else _encode([name])[0].tolist()
         except Exception as exc:
             logger.debug("Entity embedding unavailable for '%s': %s", name, exc)
             return name
@@ -121,10 +138,14 @@ class KGMerger:
         obj_type: str = "Unknown",
         subj_props: dict | None = None,
         obj_props: dict | None = None,
+        skip_entity_upsert: bool = False,
     ) -> None:
-        # Ensure both entities are fully upserted with their granular types and property payloads
-        self.upsert_entity(subj, subj_type, subj_props)
-        self.upsert_entity(obj, obj_type, obj_props)
+        # Ensure both entities are fully upserted with their granular types and
+        # property payloads. The batched document path sets skip_entity_upsert=True
+        # because it has already upserted every unique entity once.
+        if not skip_entity_upsert:
+            self.upsert_entity(subj, subj_type, subj_props)
+            self.upsert_entity(obj, obj_type, obj_props)
 
         cypher = """
         MATCH (s:Entity {name: $subj})
@@ -151,6 +172,130 @@ class KGMerger:
                 src=source_paper,
                 conf=confidence,
             )
+
+    # ── Batched document upsert ───────────────────────────────────────────────
+
+    def upsert_document_triples(self, triples: list, source_id: str) -> int:
+        """Upsert all triples of one document with batched embedding + dedup.
+
+        Latency optimisation over calling upsert_entity/upsert_triple per triple:
+          1. Collect every distinct (name, type) mention across the document.
+          2. Batch-encode all unique names in a SINGLE embedder call.
+          3. Dedup exact-string duplicates (safe; same as the exact-match path).
+          4. Dedup intra-document *fuzzy* duplicates greedily using the batched
+             embeddings + ENTITY_MERGE_THRESHOLD, so two brand-new near-duplicate
+             names in the same document collapse to one node — preserving the
+             behaviour of the old incremental one-at-a-time path.
+          5. Upsert each surviving unique entity once (reusing its embedding).
+          6. Write triples via a name->canonical map, skipping per-triple entity
+             upserts.
+
+        Returns the number of triples written.
+        """
+        if not triples:
+            return 0
+
+        # 1. Collect distinct mentions. First mention wins for type/props.
+        #    Key on (name, type) since resolution is type-scoped.
+        mentions: dict[tuple[str, str], dict] = {}
+        for t in triples:
+            for name, etype, props in (
+                (t.subject, t.subject_type, t.subject_props),
+                (t.obj, t.obj_type, t.obj_props),
+            ):
+                key = (name, etype)
+                if key not in mentions:
+                    mentions[key] = dict(props) if props else {}
+
+        unique_keys = list(mentions.keys())
+        names = [k[0] for k in unique_keys]
+
+        # 2. Batch-encode every unique name in one forward pass.
+        embeddings: list[list[float] | None] = [None] * len(names)
+        try:
+            matrix = _encode(names)
+            embeddings = [row.tolist() for row in matrix]
+        except Exception as exc:
+            logger.debug("Batch name embedding unavailable for document '%s': %s", source_id, exc)
+
+        # 3 + 4. Build canonical map with exact + intra-document fuzzy dedup.
+        #        canonical_map: (name, type) -> canonical name to write with.
+        canonical_map: dict[tuple[str, str], str] = {}
+        # Per type, remember accepted (name, embedding) reps for fuzzy compare.
+        reps_by_type: dict[str, list[tuple[str, np.ndarray]]] = {}
+        # Embedding to write for each surviving canonical entity.
+        emb_for_key: dict[tuple[str, str], list[float] | None] = {}
+        threshold = cfg.ENTITY_MERGE_THRESHOLD
+
+        for idx, key in enumerate(unique_keys):
+            name, etype = key
+            emb = embeddings[idx]
+
+            reps = reps_by_type.setdefault(etype, [])
+
+            # Exact-string dedup: identical (name, type) already collapsed by the
+            # dict, so any remaining same-name is a different type — no action.
+
+            # Fuzzy dedup against reps already accepted for this type.
+            matched = None
+            if emb is not None:
+                emb_vec = np.asarray(emb, dtype="float32")
+                best_score = -1.0
+                for rep_name, rep_vec in reps:
+                    # Vectors are L2-normalised by the embedder, so dot == cosine.
+                    score = float(np.dot(emb_vec, rep_vec))
+                    if score >= threshold and score > best_score:
+                        best_score = score
+                        matched = rep_name
+                if matched is not None:
+                    logger.debug(
+                        "Intra-doc fuzzy merge: '%s' -> '%s' (sim=%.3f)",
+                        name, matched, best_score,
+                    )
+
+            if matched is not None:
+                canonical_map[key] = matched
+            else:
+                canonical_map[key] = name
+                if emb is not None:
+                    reps.append((name, np.asarray(emb, dtype="float32")))
+                emb_for_key[key] = emb
+
+        # 5. Upsert each surviving unique entity once, reusing its embedding.
+        #    A resolved canonical (matched against the *existing* graph) may
+        #    differ from the in-memory name, so track the final written name and
+        #    map every alias key to it. Process canonical keys before aliases so
+        #    the canonical is always upserted first.
+        resolved_name: dict[tuple[str, str], str] = {}
+
+        # Upsert canonicals (keys that map to themselves).
+        for key in unique_keys:
+            if canonical_map[key] == key[0]:
+                final = self.upsert_entity(
+                    key[0], key[1], mentions[key],
+                    embedding=emb_for_key.get(key),
+                )
+                resolved_name[key] = final
+
+        # Map aliases (fuzzy-merged names) onto their canonical's final name.
+        for key in unique_keys:
+            if key not in resolved_name:
+                canonical_key = (canonical_map[key], key[1])
+                resolved_name[key] = resolved_name.get(canonical_key, canonical_map[key])
+
+        # 6. Write triples using the resolved names; skip per-triple entity upsert.
+        written = 0
+        for t in triples:
+            subj = resolved_name.get((t.subject, t.subject_type), t.subject)
+            obj = resolved_name.get((t.obj, t.obj_type), t.obj)
+            self.upsert_triple(
+                subj, t.predicate, obj, source_id, t.confidence,
+                subj_type=t.subject_type, obj_type=t.obj_type,
+                skip_entity_upsert=True,
+            )
+            written += 1
+        return written
+
     # ── Vector Similarity Clustering ──────────────────────────────────────────
 
     def run_vector_clustering_job(self, threshold: float | None = None) -> int:
