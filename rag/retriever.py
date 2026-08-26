@@ -14,7 +14,7 @@ from google.genai import types
 
 from config import cfg, get_predicate_weight
 from rag.router import route_query
-from utils.embedder import encode as _encode
+from utils.embedder import encode as _encode, chunk_text as _chunk_text
 from utils.gemini import get_client
 
 logger = logging.getLogger(__name__)
@@ -169,12 +169,13 @@ class GraphRetriever:
             return []
 
     def vector_search(self, query: str, k: int = 5) -> list[VectorResult]:
-        """Queries the Native Neo4j vector index."""
+        """Queries the native Neo4j chunk vector index for passage-level matches."""
         q_emb = _encode([query])[0].tolist()
         cypher = """
-        CALL db.index.vector.queryNodes('entity_embedding', $k, $embedding)
+        CALL db.index.vector.queryNodes('chunk_embedding', $k, $embedding)
         YIELD node, score
-        RETURN node.text AS text, score, node.name AS doc_id
+        OPTIONAL MATCH (node)-[:FROM_DOC]->(doc:Entity)
+        RETURN node.text AS text, score, coalesce(doc.name, node.doc_id) AS doc_id
         """
         try:
             with self.driver.session() as s:
@@ -184,7 +185,7 @@ class GraphRetriever:
                 for r in records if r.get("text")
             ]
         except Exception as exc:
-            logger.warning("Neo4j Vector search failed (is the index built?): %s", exc)
+            logger.warning("Neo4j chunk vector search failed (is the index built?): %s", exc)
             return []
 
 
@@ -237,28 +238,79 @@ class Retriever:
         )
 
     def index_document(self, doc: dict):
-        """Generates an embedding and saves the text, vector, and metadata directly to the Neo4j node."""
+        """Chunk the document, embed each passage, and store :Chunk nodes linked
+        to the source :Entity for passage-level semantic retrieval.
+
+        The parent entity keeps its raw `text` (used by summaries and abstract
+        fetching), but the retrieval vectors now live on :Chunk nodes — the
+        entity's own vector space is reserved for name-based resolution.
+        Re-ingesting a document replaces its chunks idempotently.
+        """
         doc_id = doc.get("title") or doc.get("id", "")
         if not doc_id:
             logger.warning("Cannot index document without a title or ID.")
             return
         abstract_or_text = doc.get("abstract") or doc.get("text", "")
         full_text = f"{doc.get('title', '')}. {abstract_or_text}".strip()
-        
-        emb = _encode([full_text])[0].tolist()
         pub_date = doc.get("published_date") or "Unknown"
-        cypher = """
+
+        # Persist raw text + publish date on the parent entity (no vector here).
+        meta_cypher = """
         MATCH (e:Entity {name: $name})
-        SET e.text = $text, 
-            e.embedding = $emb,
+        SET e.text = $text,
             e.published_date = CASE WHEN $pub_date <> 'Unknown' THEN $pub_date ELSE COALESCE(e.published_date, 'Unknown') END
         RETURN count(e) AS matched_count
         """
         with self.driver.session() as s:
-            result = s.run(cypher, name=doc_id, text=full_text, emb=emb, pub_date=pub_date)
-            record = result.single()
+            record = s.run(
+                meta_cypher, name=doc_id, text=full_text, pub_date=pub_date
+            ).single()
             matched = record["matched_count"] if record else 0
-        if matched > 0:
-            logger.info("Vector embedding & metadata saved to Neo4j for node: %s", doc_id)
-        else:
-            logger.warning("No Neo4j entity found with name '%s' to attach embedding.", doc_id)
+
+        if matched == 0:
+            logger.warning("No Neo4j entity found with name '%s' to attach chunks.", doc_id)
+            return
+
+        # Build passage chunks and their embeddings.
+        chunks = _chunk_text(full_text)
+        if not chunks:
+            logger.warning("Document '%s' produced no chunks to index.", doc_id)
+            return
+
+        try:
+            embeddings = _encode(chunks)
+        except Exception as exc:
+            logger.warning("Chunk embedding failed for '%s': %s", doc_id, exc)
+            return
+
+        chunk_rows = [
+            {
+                "id": f"{doc_id}::chunk::{i}",
+                "text": chunk,
+                "seq": i,
+                "embedding": embeddings[i].tolist(),
+            }
+            for i, chunk in enumerate(chunks)
+        ]
+
+        # Replace any prior chunks for this doc, then recreate — keeps re-ingest idempotent.
+        write_cypher = """
+        MATCH (e:Entity {name: $name})
+        OPTIONAL MATCH (e)<-[:FROM_DOC]-(old:Chunk)
+        DETACH DELETE old
+        WITH e
+        UNWIND $chunks AS chunk
+        CREATE (c:Chunk {
+            id: chunk.id,
+            text: chunk.text,
+            seq: chunk.seq,
+            doc_id: $name,
+            embedding: chunk.embedding
+        })
+        MERGE (c)-[:FROM_DOC]->(e)
+        RETURN count(c) AS created
+        """
+        with self.driver.session() as s:
+            result = s.run(write_cypher, name=doc_id, chunks=chunk_rows).single()
+            created = result["created"] if result else 0
+        logger.info("Indexed %d chunk(s) for node: %s", created, doc_id)

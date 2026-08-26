@@ -38,3 +38,36 @@ def encode(texts: list[str], normalize: bool = True) -> np.ndarray:
         norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
         embeddings = embeddings / np.maximum(norms, 1e-9)
     return embeddings.astype("float32")
+
+
+def chunk_text(
+    text: str,
+    chunk_words: int = 120,
+    overlap_words: int = 30,
+) -> list[str]:
+    """Split *text* into overlapping word-windows suitable for passage embedding.
+
+    Uses whole-word windows (not tokens) so chunks stay human-readable and align
+    with the embedder's 256-token truncation limit — ~120 words comfortably fits
+    under 256 tokens for English prose. Overlap preserves context across chunk
+    boundaries so a relationship split across two sentences is still retrievable.
+
+    Returns a list with at least one chunk for any non-empty input.
+    """
+    if not text or not text.strip():
+        return []
+
+    words = text.split()
+    if len(words) <= chunk_words:
+        return [" ".join(words)]
+
+    step = max(1, chunk_words - overlap_words)
+    chunks: list[str] = []
+    for start in range(0, len(words), step):
+        window = words[start : start + chunk_words]
+        if not window:
+            break
+        chunks.append(" ".join(window))
+        if start + chunk_words >= len(words):
+            break
+    return chunks

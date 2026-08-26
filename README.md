@@ -116,7 +116,11 @@ Executes natural language processing to extract structural graph data from raw d
 
 ### 3. Hybrid Storage Engine
 * **Neo4j Property Graph:** Maintains transactional integrity for the knowledge graph. Stores entities as nodes and predicates as directed edges. Handles real-time graph projections for visualization and multi-hop Cypher querying.
-* **Neo4j Native Vector Index:** Dense embeddings are stored as an `embedding` property directly on each `:Entity` node and searched via Neo4j's built-in HNSW vector index (`db.index.vector.queryNodes`). Text payloads are vectorized locally using ONNX Runtime transformer models, avoiding API network latency during embedding creation. Keeping vectors in Neo4j means there is no separate index file to persist — a key advantage on ephemeral hosting (e.g. free-tier PaaS) where local files are wiped on restart.
+* **Two Separated Vector Spaces (Neo4j Native Vector Index):** The system keeps two distinct embedding spaces so name-similarity and passage-similarity never pollute each other:
+  * **Name embeddings** (`entity_name_embedding` index on `:Entity.name_embedding`) hold a short vector of the entity *name*, used exclusively for **entity resolution** — deduplicating *"LLMs"*, *"Large Language Models"*, and *"large language model"* into one canonical node.
+  * **Chunk embeddings** (`chunk_embedding` index on `:Chunk.embedding`) hold passage-level vectors used for **semantic retrieval**. Each ingested document is split into overlapping sliding-window passages, embedded, and stored as `:Chunk` nodes linked to their source `:Entity` via `[:FROM_DOC]`. Retrieval matches at the passage level and then resolves the parent document, giving far finer precision than embedding a whole abstract as one vector.
+
+  Text payloads are vectorized locally using ONNX Runtime transformer models, avoiding API network latency during embedding creation. Keeping vectors in Neo4j means there is no separate index file to persist — a key advantage on ephemeral hosting (e.g. free-tier PaaS) where local files are wiped on restart.
 
 ### 4. Generative AI & Synthesis Layer (Google Gemini 2.5 Flash)
 * **Structured Retrieval Context:** Merges vector search results with structural graph neighborhood sub-graphs into a unified prompt context.
@@ -167,13 +171,28 @@ Directed relationships connect entities via extracted predicates.
 
 ### Cypher Schema Definitions
 ```cypher
-// Enforce canonical entity name uniqueness
-CREATE CONSTRAINT unique_entity_name IF NOT EXISTS
+// Enforce canonical entity name uniqueness (entities are MERGEd on name only)
+CREATE CONSTRAINT entity_name IF NOT EXISTS
 FOR (e:Entity) REQUIRE e.name IS UNIQUE;
 
-// Indexes for performance optimization
+// Chunk id uniqueness for idempotent re-ingestion
+CREATE CONSTRAINT chunk_id IF NOT EXISTS
+FOR (c:Chunk) REQUIRE c.id IS UNIQUE;
+
+// Performance indexes
 CREATE INDEX entity_type_idx IF NOT EXISTS FOR (e:Entity) ON (e.type);
-CREATE INDEX entity_mention_idx IF NOT EXISTS FOR (e:Entity) ON (e.mention_count);
+CREATE FULLTEXT INDEX entity_fulltext IF NOT EXISTS FOR (e:Entity) ON EACH [e.name];
+CREATE INDEX relation_confidence IF NOT EXISTS FOR ()-[r:RELATION]-() ON (r.confidence);
+
+// Vector index for ENTITY RESOLUTION — short name vectors on :Entity.name_embedding
+CREATE VECTOR INDEX entity_name_embedding IF NOT EXISTS
+FOR (e:Entity) ON (e.name_embedding)
+OPTIONS {indexConfig: {`vector.dimensions`: 384, `vector.similarity_function`: 'cosine'}};
+
+// Vector index for SEMANTIC RETRIEVAL — passage vectors on :Chunk.embedding
+CREATE VECTOR INDEX chunk_embedding IF NOT EXISTS
+FOR (c:Chunk) ON (c.embedding)
+OPTIONS {indexConfig: {`vector.dimensions`: 384, `vector.similarity_function`: 'cosine'}};
 
 ```
 
@@ -195,10 +214,10 @@ CREATE INDEX entity_mention_idx IF NOT EXISTS FOR (e:Entity) ON (e.mention_count
                                  │
          ┌───────────────────────┴───────────────────────┐
          ▼                                               ▼
-[Neo4j Cypher Idempotent MERGE]             [Neo4j Vector Property Write]
-  - MERGE (s:Entity {name: ...})              - Compute ONNX embedding
-  - ON MATCH SET count = count + 1            - SET e.embedding = vector
-  - MERGE (s)-[r:RELATION]->(o)               - Indexed by native vector index
+[Neo4j Cypher Idempotent MERGE]             [Neo4j Chunk Vector Write]
+  - MERGE (s:Entity {name: ...})              - Split text into passages
+  - ON MATCH SET count = count + 1            - Embed each chunk (ONNX)
+  - MERGE (s)-[r:RELATION]->(o)               - CREATE (:Chunk)-[:FROM_DOC]->(:Entity)
          │                                               │
          └───────────────────────┬───────────────────────┘
                                  │

@@ -33,11 +33,14 @@ class KGMerger:
     ) -> str:
         props = dict(properties) if properties else {}
         canonical = self._resolve_entity(name, entity_type) or name
-        if "embedding" not in props:
+        # Name-only embedding used exclusively for entity resolution / clustering.
+        # Retrieval embeddings live on :Chunk nodes, not here — keeping them apart
+        # prevents name-similarity and passage-similarity from polluting each other.
+        if "name_embedding" not in props:
             try:
-                props["embedding"] = _encode(canonical)[0].tolist()
+                props["name_embedding"] = _encode(canonical)[0].tolist()
             except Exception as exc:
-                logger.debug("Entity embedding unavailable for '%s': %s", canonical, exc)
+                logger.debug("Entity name embedding unavailable for '%s': %s", canonical, exc)
 
         cypher = """
         MERGE (e:Entity {name: $name})
@@ -76,7 +79,7 @@ class KGMerger:
 
         # 3. Use Neo4j native vector index to find the most similar entity of the same type
         cypher = """
-        CALL db.index.vector.queryNodes('entity_embedding', 10, $embedding)
+        CALL db.index.vector.queryNodes('entity_name_embedding', 10, $embedding)
         YIELD node, score
         WHERE node.type = $type AND score >= $threshold
         RETURN node.name AS name, score
@@ -158,8 +161,8 @@ class KGMerger:
         threshold = threshold or cfg.ENTITY_MERGE_THRESHOLD
         query = """
         MATCH (e1:Entity)
-        WHERE e1.embedding IS NOT NULL
-        CALL db.index.vector.queryNodes('entity_embedding', 5, e1.embedding)
+        WHERE e1.name_embedding IS NOT NULL
+        CALL db.index.vector.queryNodes('entity_name_embedding', 5, e1.name_embedding)
         YIELD node AS e2, score
         WHERE e1 <> e2 AND e1.type = e2.type AND score >= $threshold
         RETURN e1.name AS id1, e2.name AS id2, score
@@ -198,6 +201,6 @@ class KGMerger:
             nodes = s.run("MATCH (n:Entity) RETURN count(n) AS c").single()["c"]
             rels = s.run("MATCH ()-[r:RELATION]->() RETURN count(r) AS c").single()["c"]
             papers = s.run("MATCH (n:Entity) WHERE n.type IN ['Paper', 'Document'] RETURN count(n) AS c").single()["c"]
-            vectors = s.run("MATCH (n:Entity) WHERE n.embedding IS NOT NULL RETURN count(n) AS c").single()["c"]
+            vectors = s.run("MATCH (c:Chunk) WHERE c.embedding IS NOT NULL RETURN count(c) AS c").single()["c"]
             
         return {"entities": nodes, "relations": rels, "papers": papers, "vectors": vectors}

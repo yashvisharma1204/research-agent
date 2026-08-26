@@ -22,9 +22,26 @@ FOR ()-[r:RELATION]-() ON (r.confidence);
 CREATE INDEX relation_last_seen IF NOT EXISTS
 FOR ()-[r:RELATION]-() ON (r.last_seen);
 
-// Neo4j 5.11+ native vector index (384-dim, cosine — matches all-MiniLM-L6-v2).
-CREATE VECTOR INDEX entity_embedding IF NOT EXISTS
-FOR (e:Entity) ON (e.embedding)
+// Neo4j 5.11+ native vector index for ENTITY RESOLUTION (merge/clustering).
+// Holds a short vector of the entity *name* only, on `:Entity.name_embedding`.
+// Kept separate from retrieval vectors so name-similarity and passage-similarity
+// never pollute each other. (384-dim, cosine — matches all-MiniLM-L6-v2.)
+CREATE VECTOR INDEX entity_name_embedding IF NOT EXISTS
+FOR (e:Entity) ON (e.name_embedding)
+OPTIONS {indexConfig: {
+  `vector.dimensions`: 384,
+  `vector.similarity_function`: 'cosine'
+}};
+
+// ── Chunk-level semantic retrieval ──────────────────────────────────────────
+// Passages of ingested documents are stored as :Chunk nodes linked to their
+// source :Entity (Paper/Document) via [:FROM_DOC]. Retrieval queries the chunk
+// vector index for passage-level precision, then resolves the parent document.
+CREATE CONSTRAINT chunk_id IF NOT EXISTS
+FOR (c:Chunk) REQUIRE c.id IS UNIQUE;
+
+CREATE VECTOR INDEX chunk_embedding IF NOT EXISTS
+FOR (c:Chunk) ON (c.embedding)
 OPTIONS {indexConfig: {
   `vector.dimensions`: 384,
   `vector.similarity_function`: 'cosine'
