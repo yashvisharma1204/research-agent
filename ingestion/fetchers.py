@@ -33,6 +33,9 @@ def _doc(
     url: str = "",
     published_date: str = "",
     citations: int | None = None,
+    venue: str = "",
+    year: str = "",
+    references: list[str] | None = None,
 ) -> dict:
     return {
         "id": doc_id,
@@ -43,6 +46,9 @@ def _doc(
         "url": url,
         "published_date": published_date,
         "citations": citations,
+        "venue": venue,
+        "year": year,
+        "references": references or [],
     }
 
 
@@ -202,7 +208,7 @@ def fetch_by_title(title: str, max_results: int = 5) -> list[dict]:
     params = {
         "query": f'"{query}"',
         "limit": max_results,
-        "fields": "title,abstract,authors,year,publicationDate,citationCount,externalIds",
+        "fields": "title,abstract,authors,year,publicationDate,citationCount,externalIds,venue,references.title",
     }
     try:
         with httpx.Client(timeout=15) as client:
@@ -228,6 +234,12 @@ def fetch_by_title(title: str, max_results: int = 5) -> list[dict]:
             # Prefer publicationDate (YYYY-MM-DD), fallback to year
             published_date=paper.get("publicationDate") or str(paper.get("year", "")),
             citations=paper.get("citationCount", 0),
+            venue=paper.get("venue", "") or "",
+            year=str(paper.get("year", "") or ""),
+            references=[
+                ref.get("title", "") for ref in (paper.get("references") or [])
+                if ref.get("title")
+            ],
         ))
 
     if results:
@@ -270,7 +282,7 @@ def fetch_by_citations(topic: str, max_results: int = 10) -> list[dict]:
     params = {
         "query": topic,
         "limit": max_results,
-        "fields": "title,abstract,authors,year,publicationDate,citationCount,externalIds",
+        "fields": "title,abstract,authors,year,publicationDate,citationCount,externalIds,venue,references.title",
     }
     try:
         with httpx.Client(timeout=15) as client:
@@ -295,6 +307,12 @@ def fetch_by_citations(topic: str, max_results: int = 10) -> list[dict]:
             url=f"https://semanticscholar.org/paper/{paper.get('paperId', '')}",
             published_date=paper.get("publicationDate") or str(paper.get("year", "")),
             citations=paper.get("citationCount", 0),
+            venue=paper.get("venue", "") or "",
+            year=str(paper.get("year", "") or ""),
+            references=[
+                ref.get("title", "") for ref in (paper.get("references") or [])
+                if ref.get("title")
+            ],
         ))
 
     results.sort(key=lambda x: x.get("citations") or 0, reverse=True)

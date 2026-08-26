@@ -38,24 +38,47 @@ class Triple:
         return f"({self.subject}:{self.subject_type}) --[{self.predicate}]--> ({self.obj}:{self.obj_type})"
 
 
+@dataclass
+class ScoreResult:
+    """A reified quantitative result: <model> achieves <value> <metric> on <dataset>.
+
+    Captures evidence-bearing benchmark claims far better than a flat stringy
+    triple. Written as (:Model)-[:ACHIEVES]->(:Result)-[:ON]->(:Dataset) and
+    (:Result)-[:MEASURED_BY]->(:Metric).
+    """
+    model: str
+    dataset: str
+    metric: str
+    value: str = ""
+    source_id: str = ""
+
+    def is_valid(self) -> bool:
+        return bool(self.model.strip() and self.dataset.strip() and self.metric.strip())
+
+
 # <--- Updated Prompt with Temporal Anchor Rules --->
 _SYSTEM_PROMPT = """You are an advanced scientific knowledge graph extractor.
 Given a text, extract factual (subject, predicate, object) triples and rich property payloads.
 
 Rules:
 - Subjects and objects should be granular technical entities or mechanism components.
-- Classify every subject and object into ONE of these granular architectural types:
+- Classify every subject and object into ONE of these types:
+    Model                   — named ML models / systems (e.g., BERT, GPT-4, Llama 2, ResNet)
     ArchitecturalInnovation — structural design changes (e.g., Rotary Embedding, SwiGLU, Multi-Query Attention)
     TrainingObjective       — loss formulations, pre-training tasks (e.g., Masked Language Modeling, DPO, RLHF)
     LossFunction            — specific mathematical losses (e.g., Cross-Entropy, Contrastive Loss)
     HardwareConstraint      — compute/memory constraints (e.g., Tensor Parallelism, FlashAttention-2)
     Dataset                 — benchmarks and corpora (e.g., SQuAD, MMLU, CommonCrawl)
     Metric                  — evaluation metrics (e.g., BLEU, Perplexity, Accuracy)
+    Task                    — problem settings a model addresses (e.g., Question Answering, Summarization, Image Classification)
     Concept                 — foundational abstract ideas (e.g., Hallucination, Weight Quantization)
+    Author                  — individual researchers / people (e.g., Ashish Vaswani, Yoshua Bengio)
+    Organisation            — labs, universities, companies (e.g., Google DeepMind, OpenAI, Stanford)
     Paper                   — publication references
     Unknown                 — fallback type
+- Prefer the most specific type. Use Model for a named system; use ArchitecturalInnovation for one of its internal components; use Task for the problem it solves.
 - Extract a "properties" dictionary for each node containing technical attributes (e.g., parameters, dimensions, brief operational summaries if mentioned).
-- Predicates should be high-signal semantic verbs: replaces_component_with, introduces_training_objective, ameliorates_limitation_of, benchmarked_superior_to, proposes, uses_dataset, achieves_score_on, related_to.
+- Predicates should be high-signal semantic verbs: replaces_component_with, introduces_training_objective, ameliorates_limitation_of, benchmarked_superior_to, proposes, uses_dataset, achieves_score_on, evaluated_on_task, developed_by, related_to.
 
 ### GENERATIONAL SCHEMA ###
 You MUST use the provided Publication Date to anchor relative temporal claims. Use these specific predicates for generational mappings:
@@ -63,18 +86,27 @@ You MUST use the provided Publication Date to anchor relative temporal claims. U
 - SUPERSEDES: The current text replaces, outperforms, or deprecates a previous method.
 - DERIVED_FROM: The model or data originates from a prior source.
 
-Return ONLY a valid JSON array, no markdown, no explanation.
-Each element format: {
+Return ONLY a valid JSON object (no markdown, no explanation) with two keys, "triples" and "results".
+
+"triples" is an array where each element has the format: {
     "subject": "...",
-    "subject_type": "ArchitecturalInnovation|TrainingObjective|LossFunction|HardwareConstraint|Dataset|Metric|Concept|Paper|Unknown",
+    "subject_type": "Model|ArchitecturalInnovation|TrainingObjective|LossFunction|HardwareConstraint|Dataset|Metric|Task|Concept|Author|Organisation|Paper|Unknown",
     "subject_properties": {"summary": "...", "parameters": "..."},
     "predicate": "...",
     "object": "...",
-    "object_type": "ArchitecturalInnovation|TrainingObjective|LossFunction|HardwareConstraint|Dataset|Metric|Concept|Paper|Unknown",
+    "object_type": "Model|ArchitecturalInnovation|TrainingObjective|LossFunction|HardwareConstraint|Dataset|Metric|Task|Concept|Author|Organisation|Paper|Unknown",
     "object_properties": {"summary": "...", "parameters": "..."},
     "confidence": 0.0-1.0,
     "temporal_rationale": "Brief explanation of the timeline dependency if BUILDS_UPON, SUPERSEDES, or DERIVED_FROM is used (otherwise leave empty)"
-  }"""
+  }
+
+"results" is an array of quantitative benchmark outcomes stated in the text (may be empty). Each element captures "<model> achieves <value> <metric> on <dataset>": {
+    "model": "name of the model/system that achieved the score",
+    "dataset": "benchmark or dataset the score was measured on",
+    "metric": "evaluation metric (e.g., Accuracy, F1, BLEU)",
+    "value": "the numeric score as stated (e.g., '88.5', '92.3%')"
+  }
+Only include a result when the text explicitly reports a model's score on a named dataset/benchmark. Do not invent numbers."""
 
 BANNED_ENTITY_KEYWORDS = {
     "dataset", "novel dataset", "applicants", "million", "billion", 
@@ -97,12 +129,67 @@ def _safe_parse_json_array(text: str) -> list:
         truncated = re.sub(r",\s*]", "]", truncated)
         return json.loads(truncated)
 
+
+def _safe_parse_payload(text: str) -> tuple[list, list]:
+    """Parse the extractor output into (triples, results).
+
+    Backward compatible: accepts either the new object form
+    {"triples": [...], "results": [...]} or a bare JSON array (legacy), in which
+    case the array is treated as triples and results is empty.
+    """
+    stripped = text.lstrip()
+    if stripped.startswith("["):
+        # Legacy bare-array form.
+        return _safe_parse_json_array(text), []
+    try:
+        obj = json.loads(text)
+    except json.JSONDecodeError:
+        # Try to recover a truncated object by closing it.
+        last_close = text.rfind("}")
+        if last_close == -1:
+            raise
+        candidate = text[: last_close + 1]
+        # Balance braces crudely by appending closers until it parses.
+        for _ in range(3):
+            try:
+                obj = json.loads(candidate)
+                break
+            except json.JSONDecodeError:
+                candidate += "}"
+        else:
+            # Last resort: pull the triples array out with the array parser.
+            return _safe_parse_json_array(text), []
+    if isinstance(obj, list):
+        return obj, []
+    triples = obj.get("triples", []) if isinstance(obj, dict) else []
+    results = obj.get("results", []) if isinstance(obj, dict) else []
+    return triples, results
+
+
+def _parse_results(results_data: list, source_id: str) -> list[ScoreResult]:
+    """Convert raw result dicts into validated ScoreResult objects."""
+    out: list[ScoreResult] = []
+    for item in results_data or []:
+        if not isinstance(item, dict):
+            continue
+        r = ScoreResult(
+            model=str(item.get("model", "") or "").strip(),
+            dataset=str(item.get("dataset", "") or "").strip(),
+            metric=str(item.get("metric", "") or "").strip(),
+            value=str(item.get("value", "") or "").strip(),
+            source_id=source_id,
+        )
+        if r.is_valid():
+            out.append(r)
+    return out
+
 class LLMExtractor:
     def __init__(self, llm_client=None):
         # `llm_client` may be injected (e.g. in tests) exposing a `.generate(prompt)`
         # method. By default we use the shared google-genai client.
         self.llm_client = llm_client
         self._client = None if llm_client is not None else get_client()
+        self.last_results: list[ScoreResult] = []
 
     def _generate(self, prompt: str, max_output_tokens: int = 8192) -> str:
         """Run a single generation and return the raw text."""
@@ -138,13 +225,14 @@ class LLMExtractor:
     def extract(self, text: str, source_id: str = "", metadata: dict = None) -> list[Triple]:
         metadata = metadata or {}
         prompt = self._build_context_prompt(text, metadata)
-        
+        self.last_results: list[ScoreResult] = []
+
         try:
             raw_text = self._generate(prompt, max_output_tokens=8192)
 
             cleaned_text = re.sub(r"^```json\s*|\s*```$", "", raw_text.strip(), flags=re.IGNORECASE)
-            data = _safe_parse_json_array(cleaned_text)
-            
+            data, results_data = _safe_parse_payload(cleaned_text)
+
             triples = []
             for item in data:
                 triples.append(Triple(
@@ -159,6 +247,7 @@ class LLMExtractor:
                     obj_props=item.get("object_properties", {}),
                     temporal_rationale=item.get("temporal_rationale", "") # <--- Added extraction mapping
                 ))
+            self.last_results = _parse_results(results_data, source_id)
             return triples
         except Exception as exc:
             logger.warning("LLM extraction failed for %s: %s", source_id, exc)
@@ -187,8 +276,8 @@ class MultiPassLLMExtractor(LLMExtractor):
         try:
             response_text = self._generate(pass_two_prompt, max_output_tokens=8192)
             cleaned_text = re.sub(r"^```json\s*|\s*```$", "", response_text.strip(), flags=re.IGNORECASE)
-            data = _safe_parse_json_array(cleaned_text)
-            
+            data, results_data = _safe_parse_payload(cleaned_text)
+
             triples = []
             for item in data:
                 triples.append(Triple(
@@ -203,6 +292,7 @@ class MultiPassLLMExtractor(LLMExtractor):
                     obj_props=item.get("object_properties", {}),
                     temporal_rationale=item.get("temporal_rationale", "") # <--- Added extraction mapping
                 ))
+            self.last_results = _parse_results(results_data, source_id)
             return triples
         except Exception as exc:
             logger.warning("Multi-pass extraction failed for %s: %s", source_id, exc)
@@ -366,16 +456,34 @@ def is_high_quality_entity(entity_name: str) -> bool:
 
 def extract_triples(text: str, source_id: str = "", published_date: str = "Unknown") -> list[Triple]:
     """Convenience wrapper — uses whichever backend is configured and applies quality filters."""
-    
+    triples, _results = extract_triples_and_results(text, source_id, published_date)
+    return triples
+
+
+def extract_triples_and_results(
+    text: str, source_id: str = "", published_date: str = "Unknown"
+) -> tuple[list[Triple], list[ScoreResult]]:
+    """Extract quality-filtered triples AND reified quantitative results in one pass.
+
+    Results are only kept when their model/dataset/metric all survive the
+    entity quality filter, keeping the reified subgraph clean.
+    """
     metadata = {"publication_date": published_date}
-    
-    raw_triples = get_extractor().extract(text, source_id=source_id, metadata=metadata)
-    
+
+    extractor = get_extractor()
+    raw_triples = extractor.extract(text, source_id=source_id, metadata=metadata)
+
     high_quality_triples = []
     for t in raw_triples:
         if is_high_quality_entity(t.subject) and is_high_quality_entity(t.obj):
             high_quality_triples.append(t)
         else:
             logger.info("Dropping low-quality triple: (%s) -> [%s] -> (%s)", t.subject, t.predicate, t.obj)
-            
-    return high_quality_triples
+
+    raw_results = getattr(extractor, "last_results", []) or []
+    quality_results = [
+        r for r in raw_results
+        if is_high_quality_entity(r.model) and is_high_quality_entity(r.dataset) and is_high_quality_entity(r.metric)
+    ]
+
+    return high_quality_triples, quality_results

@@ -15,6 +15,39 @@ from utils.embedder import encode as _encode
 
 logger = logging.getLogger(__name__)
 
+# Ontology types that are promoted to real Neo4j labels (in addition to the
+# base :Entity label). Kept as a whitelist so a hallucinated / malformed type
+# from the LLM can never inject an arbitrary label. Must mirror the type list
+# in ingestion/extractors.py.
+ONTOLOGY_LABELS = {
+    "Model",
+    "ArchitecturalInnovation",
+    "TrainingObjective",
+    "LossFunction",
+    "HardwareConstraint",
+    "Dataset",
+    "Metric",
+    "Task",
+    "Concept",
+    "Author",
+    "Organisation",
+    "Paper",
+    "Document",
+    "Result",
+}
+
+
+def _type_to_label(entity_type: str | None) -> str | None:
+    """Map an ontology *type* string to a safe Neo4j label, or None.
+
+    Only whitelisted types become labels; anything else (including 'Unknown')
+    returns None so no extra label is applied.
+    """
+    if not entity_type:
+        return None
+    label = entity_type.strip()
+    return label if label in ONTOLOGY_LABELS else None
+
 
 class KGMerger:
     """
@@ -65,12 +98,35 @@ class KGMerger:
             e.updated = timestamp(), 
             e.mention_count = coalesce(e.mention_count, 0) + 1
         SET e += $props
-        RETURN e.name AS name
+        WITH e
+        CALL apoc.create.addLabels(e, $labels) YIELD node
+        RETURN node.name AS name
         """
+        # Promote the ontology type to a real label (in addition to :Entity).
+        # Whitelisted only, so a bad LLM type can't inject an arbitrary label.
+        label = _type_to_label(entity_type)
+        labels = [label] if label else []
         with self.driver.session() as s:
-            result = s.run(cypher, name=canonical, type=entity_type, props=props)
-            record = result.single()
-            return record["name"] if record else canonical
+            try:
+                result = s.run(
+                    cypher, name=canonical, type=entity_type, props=props, labels=labels
+                )
+                record = result.single()
+                return record["name"] if record else canonical
+            except Exception as exc:
+                # APOC unavailable / label call failed — fall back to a plain
+                # upsert without the dynamic label so ingestion still succeeds.
+                logger.warning("addLabels failed for '%s' (%s); upserting without type label", canonical, exc)
+                fallback = """
+                MERGE (e:Entity {name: $name})
+                ON CREATE SET e.type = $type, e.created = timestamp(), e.mention_count = 1
+                ON MATCH SET e.type = COALESCE(e.type, $type), e.updated = timestamp(),
+                    e.mention_count = coalesce(e.mention_count, 0) + 1
+                SET e += $props
+                RETURN e.name AS name
+                """
+                record = s.run(fallback, name=canonical, type=entity_type, props=props).single()
+                return record["name"] if record else canonical
 
     def _resolve_entity(
         self,
@@ -296,9 +352,141 @@ class KGMerger:
             written += 1
         return written
 
+    # ── First-class Paper + literature subgraph ───────────────────────────────
+
+    def upsert_paper(self, doc: dict) -> str:
+        """Upsert a paper as a first-class :Paper node with rich metadata, then
+        attach its authors and citation edges.
+
+        doc keys used: title, url, source, citations, published_date, abstract,
+        venue, year, authors (list[str]), references (list[str] of cited titles).
+        Returns the canonical paper name.
+        """
+        title = doc.get("title", "")
+        if not title:
+            return ""
+
+        pub_date = doc.get("published_date") or "Unknown"
+        props = {
+            "url": doc.get("url", ""),
+            "source": doc.get("source", ""),
+            "citations": doc.get("citations", 0) or 0,
+            "published_date": pub_date,
+            "venue": doc.get("venue", "") or "",
+            "year": str(doc.get("year", "") or ""),
+            "text": doc.get("abstract", "") or "",
+        }
+        paper_name = self.upsert_entity(title, "Paper", props)
+
+        self.upsert_authors(paper_name, doc.get("authors") or [])
+        self.upsert_citations(paper_name, doc.get("references") or [])
+        return paper_name
+
+    def upsert_authors(self, paper_name: str, authors: list[str]) -> int:
+        """Create (:Author)-[:AUTHORED]->(:Paper) edges. Authors become real
+        :Author-labelled entities via the standard entity upsert path."""
+        written = 0
+        for author in authors:
+            author = (author or "").strip()
+            if not author:
+                continue
+            canonical = self.upsert_entity(author, "Author")
+            cypher = """
+            MATCH (a:Entity {name: $author})
+            MATCH (p:Entity {name: $paper})
+            MERGE (a)-[:AUTHORED]->(p)
+            """
+            with self.driver.session() as s:
+                try:
+                    s.run(cypher, author=canonical, paper=paper_name)
+                    written += 1
+                except Exception as exc:
+                    logger.debug("AUTHORED edge failed (%s -> %s): %s", canonical, paper_name, exc)
+        return written
+
+    def upsert_citations(self, paper_name: str, cited_titles: list[str]) -> int:
+        """Create (:Paper)-[:CITES]->(:Paper) edges. Cited papers are upserted as
+        lightweight :Paper stubs (title only) so the citation network is
+        navigable even before the cited paper is fully ingested."""
+        written = 0
+        for cited in cited_titles:
+            cited = (cited or "").strip()
+            if not cited or cited == paper_name:
+                continue
+            canonical = self.upsert_entity(cited, "Paper")
+            cypher = """
+            MATCH (src:Entity {name: $src})
+            MATCH (dst:Entity {name: $dst})
+            WHERE src <> dst
+            MERGE (src)-[:CITES]->(dst)
+            """
+            with self.driver.session() as s:
+                try:
+                    s.run(cypher, src=paper_name, dst=canonical)
+                    written += 1
+                except Exception as exc:
+                    logger.debug("CITES edge failed (%s -> %s): %s", paper_name, canonical, exc)
+        return written
+
+    # ── Results reification ───────────────────────────────────────────────────
+
+    def upsert_results(self, results: list, source_id: str) -> int:
+        """Write reified benchmark results as an evidence subgraph:
+
+            (:Model)-[:ACHIEVES]->(:Result {value, source})-[:ON]->(:Dataset)
+            (:Result)-[:MEASURED_BY]->(:Metric)
+
+        Each *results* item is a ScoreResult (model/dataset/metric/value). The
+        Model/Dataset/Metric endpoints are upserted through the normal entity
+        path so they get their type labels + name embeddings. The Result node is
+        a reified relationship carrying the numeric evidence and provenance.
+        Returns the number of results written.
+        """
+        written = 0
+        for r in results or []:
+            model = getattr(r, "model", "").strip()
+            dataset = getattr(r, "dataset", "").strip()
+            metric = getattr(r, "metric", "").strip()
+            value = getattr(r, "value", "") or ""
+            if not (model and dataset and metric):
+                continue
+
+            model_c = self.upsert_entity(model, "Model")
+            dataset_c = self.upsert_entity(dataset, "Dataset")
+            metric_c = self.upsert_entity(metric, "Metric")
+
+            # Deterministic result id so re-ingesting the same claim is idempotent.
+            result_id = f"{model_c}::{dataset_c}::{metric_c}"
+            cypher = """
+            MATCH (m:Entity {name: $model})
+            MATCH (d:Entity {name: $dataset})
+            MATCH (met:Entity {name: $metric})
+            MERGE (res:Result {id: $rid})
+              ON CREATE SET res.value = $value, res.source = $src, res.created = timestamp()
+              ON MATCH  SET res.value = $value, res.updated = timestamp()
+            MERGE (m)-[:ACHIEVES]->(res)
+            MERGE (res)-[:ON]->(d)
+            MERGE (res)-[:MEASURED_BY]->(met)
+            """
+            with self.driver.session() as s:
+                try:
+                    s.run(
+                        cypher,
+                        model=model_c, dataset=dataset_c, metric=metric_c,
+                        rid=result_id, value=str(value), src=source_id,
+                    )
+                    written += 1
+                except Exception as exc:
+                    logger.debug("Result reification failed (%s): %s", result_id, exc)
+        return written
+
     # ── Vector Similarity Clustering ──────────────────────────────────────────
 
     def run_vector_clustering_job(self, threshold: float | None = None) -> int:
+        """
+        Scans the entity embedding index periodically to bridge concept silos
+        and merge semantic duplicates using APOC refactoring.
+        """
         """
         Scans the entity embedding index periodically to bridge concept silos
         and merge semantic duplicates using APOC refactoring.
@@ -345,7 +533,20 @@ class KGMerger:
         with self.driver.session() as s:
             nodes = s.run("MATCH (n:Entity) RETURN count(n) AS c").single()["c"]
             rels = s.run("MATCH ()-[r:RELATION]->() RETURN count(r) AS c").single()["c"]
-            papers = s.run("MATCH (n:Entity) WHERE n.type IN ['Paper', 'Document'] RETURN count(n) AS c").single()["c"]
+            # Count papers by real :Paper label OR legacy type string (pre-migration nodes).
+            papers = s.run(
+                "MATCH (n:Entity) WHERE n:Paper OR n.type IN ['Paper', 'Document'] "
+                "RETURN count(n) AS c"
+            ).single()["c"]
             vectors = s.run("MATCH (c:Chunk) WHERE c.embedding IS NOT NULL RETURN count(c) AS c").single()["c"]
-            
-        return {"entities": nodes, "relations": rels, "papers": papers, "vectors": vectors}
+            authors = s.run("MATCH (n:Author) RETURN count(n) AS c").single()["c"]
+            results = s.run("MATCH (r:Result) RETURN count(r) AS c").single()["c"]
+
+        return {
+            "entities": nodes,
+            "relations": rels,
+            "papers": papers,
+            "vectors": vectors,
+            "authors": authors,
+            "results": results,
+        }

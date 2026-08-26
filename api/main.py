@@ -23,7 +23,7 @@ from google.genai import types
 from config import cfg
 from graph.merger import KGMerger
 from graph.neo4j_client import get_driver
-from ingestion.extractors import extract_triples
+from ingestion.extractors import extract_triples, extract_triples_and_results
 from ingestion.fetchers import fetch_foundational
 from rag.retriever import Retriever
 from rag.synthesiser import Synthesiser
@@ -148,6 +148,8 @@ class StatsResponse(BaseModel):
     relations: int
     papers: int
     vector_index_size: int
+    authors: int = 0
+    results: int = 0
 
 
 class GraphResponse(BaseModel):
@@ -232,18 +234,13 @@ async def ingest_arxiv_endpoint(req: IngestURLRequest):
         pub_date = doc.get("published_date") or "Unknown"
 
         # Pass the date into the extractor
-        triples = extract_triples(text, source_id=doc["id"], published_date=pub_date)
+        triples, results = extract_triples_and_results(text, source_id=doc["id"], published_date=pub_date)
 
-        # Store paper as entity, adding published_date to Neo4j properties
-        merger.upsert_entity(doc["title"], "Paper", {
-            "url": doc.get("url", ""),
-            "source": doc.get("source", ""),
-            "citations": doc.get("citations", 0),
-            "published_date": pub_date,
-            "text": doc["abstract"],
-        })
+        # Store paper as a first-class :Paper node (metadata + author/citation subgraph)
+        merger.upsert_paper(doc)
 
         merger.upsert_document_triples(triples, doc["id"])
+        merger.upsert_results(results, doc["id"])
 
         retriever.index_document(doc)
         total_triples += len(triples)
@@ -262,7 +259,7 @@ async def ingest_text_endpoint(req: IngestTextRequest):
     doc_id = req.doc_id or req.title
     
     # Pass the date into the extractor
-    triples = extract_triples(req.text, source_id=doc_id, published_date=req.published_date)
+    triples, results = extract_triples_and_results(req.text, source_id=doc_id, published_date=req.published_date)
 
     # Persist the date in Neo4j
     merger.upsert_entity(req.title, "Document", {
@@ -271,6 +268,7 @@ async def ingest_text_endpoint(req: IngestTextRequest):
     })
     
     merger.upsert_document_triples(triples, doc_id)
+    merger.upsert_results(results, doc_id)
 
     # Pass the date into the vector database
     retriever.index_document({
@@ -294,6 +292,8 @@ async def stats():
         relations=graph_stats["relations"],
         papers=graph_stats["papers"],
         vector_index_size=graph_stats.get("vectors", 0),
+        authors=graph_stats.get("authors", 0),
+        results=graph_stats.get("results", 0),
     )
 
 

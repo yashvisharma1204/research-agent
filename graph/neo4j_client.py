@@ -50,6 +50,15 @@ SCHEMA_STATEMENTS = [
     "CREATE VECTOR INDEX chunk_embedding IF NOT EXISTS "
     "FOR (c:Chunk) ON (c.embedding) OPTIONS {indexConfig: {"
     "  `vector.dimensions`: 384, `vector.similarity_function`: 'cosine'}}",
+
+    # Reified benchmark results: (:Model)-[:ACHIEVES]->(:Result)-[:ON]->(:Dataset),
+    # (:Result)-[:MEASURED_BY]->(:Metric). Result id is deterministic for idempotency.
+    "CREATE CONSTRAINT result_id IF NOT EXISTS "
+    "FOR (r:Result) REQUIRE r.id IS UNIQUE",
+
+    # Label-scoped lookups for the promoted ontology labels used in queries.
+    "CREATE INDEX paper_year_idx IF NOT EXISTS "
+    "FOR (p:Paper) ON (p.year)",
 ]
 
 
