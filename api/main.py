@@ -377,13 +377,44 @@ async def get_graph(limit: int = 120):
     if not merger:
         raise HTTPException(503, "Agent not initialised")
 
-    cypher = """
+    # 1) Extracted semantic triples (generic :RELATION edges).
+    relation_cypher = """
     MATCH (s:Entity)-[r:RELATION]->(o:Entity)
-    RETURN 
+    RETURN
         s.name AS s_name, s.type AS s_type, s.mention_count AS s_mention,
         o.name AS e_name, o.type AS e_type, o.mention_count AS e_mention,
         r.type AS r_type, r.confidence AS r_confidence, r.mention_count AS r_mention, r.sources AS r_sources
     LIMIT $limit
+    """
+
+    # 2) Structural + reified edges introduced by the ontology redesign.
+    #    Each row carries typed endpoints so authors, papers, and reified
+    #    result subgraphs surface in the visualiser (they never use :RELATION).
+    #    :Result nodes are NOT :Entity-labelled, so they are coalesced with a
+    #    literal "Result" type for palette colouring on the frontend.
+    structural_cypher = """
+    MATCH (a)-[r:AUTHORED|CITES|ACHIEVES|ON|MEASURED_BY]->(b)
+    RETURN
+        a.name AS s_name,
+        coalesce(a.type, head([l IN labels(a) WHERE l <> 'Entity'])) AS s_type,
+        a.mention_count AS s_mention,
+        b.name AS e_name,
+        coalesce(b.type, head([l IN labels(b) WHERE l <> 'Entity'])) AS e_type,
+        b.mention_count AS e_mention,
+        type(r) AS r_type
+    LIMIT $limit
+    """
+
+    # 3) Any remaining nodes with no rendered edge, so the visualiser total
+    #    lines up with /stats instead of silently dropping isolated nodes.
+    isolated_cypher = """
+    MATCH (n)
+    WHERE (n:Entity OR n:Result)
+    RETURN
+        n.name AS name,
+        coalesce(n.type, head([l IN labels(n) WHERE l <> 'Entity'])) AS type,
+        n.mention_count AS mention
+    LIMIT $node_limit
     """
 
     nodes_map: dict[str, dict] = {}
@@ -394,28 +425,28 @@ async def get_graph(limit: int = 120):
             return val["low"] + val.get("high", 0) * (2 ** 32)
         return int(val) if val is not None else 0
 
-    with get_driver().session() as session:
-        records = session.run(cypher, limit=limit).data()
+    def add_node(node_id, node_type, mention):
+        if not node_id:
+            return
+        if node_id not in nodes_map:
+            nodes_map[node_id] = {
+                "id": node_id,
+                "name": node_id,
+                "type": node_type or "Unknown",
+                "mention_count": neo_int(mention if mention is not None else 1),
+            }
 
-    for rec in records:
+    with get_driver().session() as session:
+        relation_records = session.run(relation_cypher, limit=limit).data()
+        structural_records = session.run(structural_cypher, limit=limit).data()
+        # Allow enough headroom to backfill isolated nodes up to the node budget.
+        isolated_records = session.run(isolated_cypher, node_limit=limit * 4).data()
+
+    for rec in relation_records:
         s_id = rec.get("s_name") or "?"
         e_id = rec.get("e_name") or "?"
-
-        if s_id not in nodes_map:
-            nodes_map[s_id] = {
-                "id": s_id,
-                "name": s_id,
-                "type": rec.get("s_type", "unknown"),
-                "mention_count": neo_int(rec.get("s_mention", 1)),
-            }
-        if e_id not in nodes_map:
-            nodes_map[e_id] = {
-                "id": e_id,
-                "name": e_id,
-                "type": rec.get("e_type", "unknown"),
-                "mention_count": neo_int(rec.get("e_mention", 1)),
-            }
-
+        add_node(s_id, rec.get("s_type"), rec.get("s_mention"))
+        add_node(e_id, rec.get("e_type"), rec.get("e_mention"))
         links.append({
             "source": s_id,
             "target": e_id,
@@ -424,5 +455,23 @@ async def get_graph(limit: int = 120):
             "mention_count": neo_int(rec.get("r_mention", 1)),
             "sources": rec.get("r_sources", []),
         })
+
+    for rec in structural_records:
+        s_id = rec.get("s_name") or "?"
+        e_id = rec.get("e_name") or "?"
+        add_node(s_id, rec.get("s_type"), rec.get("s_mention"))
+        add_node(e_id, rec.get("e_type"), rec.get("e_mention"))
+        links.append({
+            "source": s_id,
+            "target": e_id,
+            "predicate": (rec.get("r_type") or "related_to").lower(),
+            "confidence": 1.0,
+            "mention_count": 1,
+            "sources": [],
+        })
+
+    # Backfill isolated nodes (no rendered edge) so counts match /stats.
+    for rec in isolated_records:
+        add_node(rec.get("name"), rec.get("type"), rec.get("mention"))
 
     return GraphResponse(nodes=list(nodes_map.values()), links=links)
