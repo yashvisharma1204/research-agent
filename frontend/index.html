@@ -1186,19 +1186,12 @@ function renderGraph(nodes, links) {
 
   svgSel.on('click', () => closeInspector());
 
-  const cats = [...new Set(nodes.map(n => n.category||n.type||'Unknown'))];
-  const r0 = Math.min(W,H)*0.28;
-  const centers = Object.fromEntries(cats.map((c,i) => {
-    const a = (i/cats.length)*2*Math.PI;
-    return [c, { x: Math.cos(a)*r0, y: Math.sin(a)*r0 }];
-  }));
-
   simulation = d3.forceSimulation(nodes)
-    .force('x', d3.forceX(d => (centers[d.category||d.type]||{x:0}).x).strength(0.18))
-    .force('y', d3.forceY(d => (centers[d.category||d.type]||{y:0}).y).strength(0.18))
-    .force('charge', d3.forceManyBody().strength(-380))
-    .force('collide', d3.forceCollide().radius(d => nodeR(d.type,d.mention_count)+14))
-    .force('link', d3.forceLink(links).id(d=>d.id).distance(100))
+    .force('charge', d3.forceManyBody().strength(-300).distanceMax(500))
+    .force('collide', d3.forceCollide().radius(d => nodeR(d.type,d.mention_count)+10).strength(0.6))
+    .force('link', d3.forceLink(links).id(d=>d.id).distance(80).strength(0.2))
+    .force('x', d3.forceX(0).strength(0.04))
+    .force('y', d3.forceY(0).strength(0.04))
     .on('tick', () => {
       linkSel.attr('x1',d=>d.source.x).attr('y1',d=>d.source.y).attr('x2',d=>d.target.x).attr('y2',d=>d.target.y);
       nodeSel.attr('transform', d=>`translate(${d.x},${d.y})`);
