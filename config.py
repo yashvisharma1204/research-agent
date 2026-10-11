@@ -40,6 +40,15 @@ class Config:
     VECTOR_TOP_K: int = int(os.getenv("VECTOR_TOP_K", "5"))
     GRAPH_TRIPLE_LIMIT: int = int(os.getenv("GRAPH_TRIPLE_LIMIT", "40"))
 
+    # Seed entity resolution (query-time). When a query term like "LLM" doesn't
+    # substring-match a node, resolve it against the entity_name_embedding vector
+    # index so it still reaches "Large Language Model". This threshold is
+    # intentionally LOOSER than ENTITY_MERGE_THRESHOLD (which governs destructive
+    # ingest-time node merging): retrieval favours recall, so near-synonyms are
+    # acceptable seeds, whereas merging two nodes must be near-certain.
+    SEED_RESOLUTION_THRESHOLD: float = float(os.getenv("SEED_RESOLUTION_THRESHOLD", "0.55"))
+    SEED_RESOLUTION_TOP_K: int = int(os.getenv("SEED_RESOLUTION_TOP_K", "3"))
+
 
 cfg = Config()
 

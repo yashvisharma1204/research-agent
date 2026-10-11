@@ -906,6 +906,9 @@ const getColor = t => COLOR_PALETTE[t] || COLOR_PALETTE.Unknown;
 
 let activeCategories = new Set();
 let graphNodes = [], graphLinks = [], simulation;
+// Live-render state shared across renderGraph / updateGraphViz / addGraphDelta.
+// gfx.nodes & gfx.links are the authoritative arrays bound to the simulation.
+const gfx = { nodes: [], links: [], nodeLayer: null, linkLayer: null, nodeSel: null, linkSel: null };
 
 // ── NOTEBOOK STICKY TAB TOGGLES ──
 function toggleCategoriesPanel() {
@@ -949,6 +952,7 @@ async function checkHealth() {
     if (!r.ok) throw new Error();
     badge.textContent = 'Connected'; badge.className = 'status-badge connected';
     refreshStats(); loadGraph(); loadIngestionHistory();
+    connectGraphStream();
   } catch {
     badge.textContent = 'Unreachable'; badge.className = 'status-badge error';
   }
@@ -1064,6 +1068,77 @@ async function loadGraph() {
   } catch {}
 }
 
+// ── LIVE GRAPH STREAM (WebSocket) ──
+let graphSocket = null;
+let graphSocketRetry = 0;
+
+function wsUrl() {
+  // Derive ws(s)://host/ws/graph from the configured API base URL.
+  const base = BASE();
+  try {
+    const u = new URL(base, window.location.href);
+    const proto = u.protocol === 'https:' ? 'wss:' : 'ws:';
+    return `${proto}//${u.host}/ws/graph`;
+  } catch {
+    return (base.replace(/^http/, 'ws')) + '/ws/graph';
+  }
+}
+
+function connectGraphStream() {
+  // Avoid duplicate sockets across repeated checkHealth() calls.
+  if (graphSocket && (graphSocket.readyState === WebSocket.OPEN || graphSocket.readyState === WebSocket.CONNECTING)) {
+    return;
+  }
+  let sock;
+  try { sock = new WebSocket(wsUrl()); }
+  catch { return; }
+  graphSocket = sock;
+
+  sock.onopen = () => { graphSocketRetry = 0; setLiveIndicator(true); };
+
+  sock.onmessage = (ev) => {
+    let msg; try { msg = JSON.parse(ev.data); } catch { return; }
+    if (msg && msg.type === 'graph_delta') {
+      addGraphDelta(msg);
+      // Keep the side-panel stats/history in step with the live canvas.
+      refreshStats(); loadIngestionHistory();
+    }
+  };
+
+  sock.onclose = () => {
+    setLiveIndicator(false);
+    // Exponential backoff reconnect (cap 15s) so a backend restart recovers.
+    graphSocketRetry = Math.min(graphSocketRetry + 1, 5);
+    const delay = Math.min(15000, 1000 * 2 ** graphSocketRetry);
+    setTimeout(() => {
+      const badge = document.getElementById('statusBadge');
+      if (badge && badge.classList.contains('connected')) connectGraphStream();
+    }, delay);
+  };
+
+  sock.onerror = () => { try { sock.close(); } catch {} };
+}
+
+function setLiveIndicator(on) {
+  const badge = document.getElementById('statusBadge');
+  if (!badge) return;
+  if (on && badge.classList.contains('connected')) {
+    badge.textContent = 'Connected · Live';
+  } else if (badge.classList.contains('connected')) {
+    badge.textContent = 'Connected';
+  }
+}
+
+// Briefly surface how many nodes just streamed in.
+let _liveFlashTimer = null;
+function flashLiveBadge(addedCount) {
+  const badge = document.getElementById('statusBadge');
+  if (!badge || !badge.classList.contains('connected')) return;
+  badge.textContent = addedCount > 0 ? `+${addedCount} live` : 'Updated · Live';
+  clearTimeout(_liveFlashTimer);
+  _liveFlashTimer = setTimeout(() => setLiveIndicator(true), 1800);
+}
+
 function buildLegend(nodes) {
   const legend = document.getElementById('graphLegend');
   legend.innerHTML = '';
@@ -1111,91 +1186,187 @@ function renderGraph(nodes, links) {
     .attr('markerWidth',6).attr('markerHeight',6).attr('orient','auto')
     .append('path').attr('d','M0,-4L8,0L0,4').attr('fill','#c4c4c8');
 
-  const linkSel = g.append('g').selectAll('line').data(links).join('line')
-    .attr('class','graph-link')
-    .attr('stroke','#d4d4d8')
-    .attr('stroke-width', 1)
-    .attr('marker-end','url(#arrow)')
-    .style('opacity', 0.5);
+  // Persistent container groups + authoritative data arrays. These are kept at
+  // module scope so addGraphDelta() can mutate the same arrays and re-bind,
+  // giving an incremental "live" render instead of a full teardown per update.
+  gfx.linkLayer = g.append('g');
+  gfx.nodeLayer = g.append('g');
+  gfx.nodes = nodes;
+  gfx.links = links;
 
-  const nodeSel = g.append('g').selectAll('g').data(nodes).join('g')
-    .attr('class','node-group').attr('cursor','pointer')
-    .call(d3.drag()
-      .on('start',(e,d)=>{ if(!e.active) simulation.alphaTarget(0.2).restart(); d.fx=d.x; d.fy=d.y; })
-      .on('drag', (e,d)=>{ d.fx=e.x; d.fy=e.y; })
-      .on('end',  (e,d)=>{ if(!e.active) simulation.alphaTarget(0); d.fx=null; d.fy=null; }));
-
-  nodeSel.each(function(d) {
-    const c = getColor(d.type);
-    d._color  = c;
-  });
-
-  nodeSel.append('circle')
-    .attr('class','node-circle')
-    .attr('r', d => nodeR(d.type, d.mention_count))
-    .attr('fill', d => d._color.bg)
-    .attr('stroke', d => d._color.border)
-    .attr('stroke-width', 2.5);
-
-  nodeSel.append('circle')
-    .attr('class', 'node-inner-dot')
-    .attr('r', d => Math.max(1, nodeR(d.type, d.mention_count) * 0.1))
-    .attr('fill', '#ffffff')
-    .attr('pointer-events', 'none');
-
-  nodeSel.append('text')
-    .attr('class','node-label')
-    .attr('dy', d => nodeR(d.type, d.mention_count) + 14)
-    .attr('text-anchor','middle')
-    .text(d => (d.name||d.id||'').length > 16 ? (d.name||d.id).slice(0,14)+'…' : (d.name||d.id));
-
-  nodeSel.on('click', async (e, d) => {
-    e.stopPropagation();
-    const c = getColor(d.type);
-    const drawer = document.getElementById('inspectorDrawer');
-    const descEl = document.getElementById('drawerDescription');
-
-    document.getElementById('drawerTitle').textContent = d.name||d.id;
-    const badge = document.getElementById('drawerBadge');
-    badge.textContent = fmt(d.type||'Entity');
-    badge.style.cssText = `background:${c.bg};color:${c.text};border:1px solid ${c.border};`;
-    document.getElementById('drawerMentions').textContent = `${d.mention_count||1} graph reference(s)`;
-
-    if (d.type === 'Paper') {
-      descEl.innerHTML = '<span style="color:var(--accent);font-weight:600;">✨ Generating summary…</span>';
-      try {
-        const res = await fetch(BASE()+'/api/paper/summary/'+encodeURIComponent(d.name||d.id));
-        const data = await res.json();
-        descEl.textContent = data.summary||data.error||'No summary generated.';
-      } catch { descEl.textContent = d.summary||d.abstract||'Error generating summary.'; }
-    } else {
-      descEl.textContent = d.summary||d.abstract||`${fmt(d.type||'Entity')} node extracted from the knowledge graph.`;
-    }
-
-    const linkCont = document.getElementById('drawerExternalLinkContainer');
-    const linkBtn  = document.getElementById('drawerExternalLink');
-    if (d.url||d.arxiv_id||d.type==='Paper') {
-      linkCont.style.display = 'block';
-      const raw = d.url||(d.arxiv_id?`https://arxiv.org/abs/${d.arxiv_id}`:`https://scholar.google.com/scholar?q=${encodeURIComponent(d.name||d.id)}`);
-      linkBtn.href = (raw.startsWith('http')?raw:'#');
-      linkBtn.textContent = d.arxiv_id ? 'View arXiv ↗' : 'Search Scholar ↗';
-    } else { linkCont.style.display = 'none'; }
-
-    drawer.classList.add('open');
-  });
-
-  svgSel.on('click', () => closeInspector());
-
-  simulation = d3.forceSimulation(nodes)
+  // forceLink mutates link.source/target from id strings into node objects, so
+  // the simulation is created once and reused across deltas.
+  simulation = d3.forceSimulation(gfx.nodes)
     .force('charge', d3.forceManyBody().strength(-300).distanceMax(500))
     .force('collide', d3.forceCollide().radius(d => nodeR(d.type,d.mention_count)+10).strength(0.6))
-    .force('link', d3.forceLink(links).id(d=>d.id).distance(80).strength(0.2))
+    .force('link', d3.forceLink(gfx.links).id(d=>d.id).distance(80).strength(0.2))
     .force('x', d3.forceX(0).strength(0.04))
     .force('y', d3.forceY(0).strength(0.04))
     .on('tick', () => {
-      linkSel.attr('x1',d=>d.source.x).attr('y1',d=>d.source.y).attr('x2',d=>d.target.x).attr('y2',d=>d.target.y);
-      nodeSel.attr('transform', d=>`translate(${d.x},${d.y})`);
+      gfx.linkSel && gfx.linkSel
+        .attr('x1',d=>d.source.x).attr('y1',d=>d.source.y)
+        .attr('x2',d=>d.target.x).attr('y2',d=>d.target.y);
+      gfx.nodeSel && gfx.nodeSel.attr('transform', d=>`translate(${d.x},${d.y})`);
     });
+
+  updateGraphViz();
+}
+
+// Incremental data-join. Binds gfx.nodes / gfx.links to the DOM using the
+// enter/update/exit pattern so repeated calls only add what's new. Called by
+// both the initial renderGraph() and addGraphDelta().
+function updateGraphViz() {
+  // ── Links ──
+  gfx.linkSel = gfx.linkLayer.selectAll('line')
+    .data(gfx.links, d => `${linkEndId(d.source)}|${linkEndId(d.target)}|${d.predicate}`)
+    .join(
+      enter => enter.append('line')
+        .attr('class','graph-link')
+        .attr('stroke','#d4d4d8')
+        .attr('stroke-width', 1)
+        .attr('marker-end','url(#arrow)')
+        .style('opacity', 0)
+        .call(e => e.transition().duration(600).style('opacity', 0.5)),
+      update => update,
+      exit => exit.remove()
+    );
+
+  // ── Nodes ──
+  gfx.nodeSel = gfx.nodeLayer.selectAll('g.node-group')
+    .data(gfx.nodes, d => d.id)
+    .join(
+      enter => {
+        const ng = enter.append('g')
+          .attr('class','node-group').attr('cursor','pointer')
+          .call(d3.drag()
+            .on('start',(e,d)=>{ if(!e.active) simulation.alphaTarget(0.2).restart(); d.fx=d.x; d.fy=d.y; })
+            .on('drag', (e,d)=>{ d.fx=e.x; d.fy=e.y; })
+            .on('end',  (e,d)=>{ if(!e.active) simulation.alphaTarget(0); d.fx=null; d.fy=null; }));
+
+        ng.each(function(d){ d._color = getColor(d.type); });
+
+        // Grow-in animation so freshly-ingested nodes "pop" into existence.
+        ng.append('circle')
+          .attr('class','node-circle')
+          .attr('r', 0)
+          .attr('fill', d => d._color.bg)
+          .attr('stroke', d => d._color.border)
+          .attr('stroke-width', 2.5)
+          .transition().duration(650).ease(d3.easeElasticOut.amplitude(0.6))
+          .attr('r', d => nodeR(d.type, d.mention_count));
+
+        ng.append('circle')
+          .attr('class', 'node-inner-dot')
+          .attr('r', d => Math.max(1, nodeR(d.type, d.mention_count) * 0.1))
+          .attr('fill', '#ffffff')
+          .attr('pointer-events', 'none');
+
+        ng.append('text')
+          .attr('class','node-label')
+          .attr('dy', d => nodeR(d.type, d.mention_count) + 14)
+          .attr('text-anchor','middle')
+          .text(d => (d.name||d.id||'').length > 16 ? (d.name||d.id).slice(0,14)+'…' : (d.name||d.id));
+
+        ng.on('click', onNodeClick);
+        return ng;
+      },
+      update => update,
+      exit => exit.remove()
+    );
+
+  svgSelClickToClose();
+}
+
+// Shared node-click handler (inspector drawer) — unchanged behaviour, hoisted
+// out so both initial render and delta-added nodes bind the same listener.
+async function onNodeClick(e, d) {
+  e.stopPropagation();
+  const c = getColor(d.type);
+  const drawer = document.getElementById('inspectorDrawer');
+  const descEl = document.getElementById('drawerDescription');
+
+  document.getElementById('drawerTitle').textContent = d.name||d.id;
+  const badge = document.getElementById('drawerBadge');
+  badge.textContent = fmt(d.type||'Entity');
+  badge.style.cssText = `background:${c.bg};color:${c.text};border:1px solid ${c.border};`;
+  document.getElementById('drawerMentions').textContent = `${d.mention_count||1} graph reference(s)`;
+
+  if (d.type === 'Paper') {
+    descEl.innerHTML = '<span style="color:var(--accent);font-weight:600;">✨ Generating summary…</span>';
+    try {
+      const res = await fetch(BASE()+'/api/paper/summary/'+encodeURIComponent(d.name||d.id));
+      const data = await res.json();
+      descEl.textContent = data.summary||data.error||'No summary generated.';
+    } catch { descEl.textContent = d.summary||d.abstract||'Error generating summary.'; }
+  } else {
+    descEl.textContent = d.summary||d.abstract||`${fmt(d.type||'Entity')} node extracted from the knowledge graph.`;
+  }
+
+  const linkCont = document.getElementById('drawerExternalLinkContainer');
+  const linkBtn  = document.getElementById('drawerExternalLink');
+  if (d.url||d.arxiv_id||d.type==='Paper') {
+    linkCont.style.display = 'block';
+    const raw = d.url||(d.arxiv_id?`https://arxiv.org/abs/${d.arxiv_id}`:`https://scholar.google.com/scholar?q=${encodeURIComponent(d.name||d.id)}`);
+    linkBtn.href = (raw.startsWith('http')?raw:'#');
+    linkBtn.textContent = d.arxiv_id ? 'View arXiv ↗' : 'Search Scholar ↗';
+  } else { linkCont.style.display = 'none'; }
+
+  drawer.classList.add('open');
+}
+
+// forceLink rewrites link endpoints from id strings to node objects after the
+// first tick; handle both shapes when computing a stable join key.
+function linkEndId(end) { return (end && typeof end === 'object') ? end.id : end; }
+
+let _svgClickBound = false;
+function svgSelClickToClose() {
+  if (_svgClickBound) return;
+  d3.select(document.getElementById('graphSvg')).on('click', () => closeInspector());
+  _svgClickBound = true;
+}
+
+// Merge a {nodes, links} delta into the live graph and gently reheat the
+// simulation so new nodes animate into place without resetting existing layout.
+function addGraphDelta(delta) {
+  if (!delta || (!delta.nodes?.length && !delta.links?.length)) return;
+  if (!simulation || !gfx.nodeLayer) {
+    // No base graph yet — treat the delta as the initial render.
+    renderGraph(delta.nodes || [], delta.links || []);
+    buildLegend(gfx.nodes);
+    return;
+  }
+
+  const nodeIndex = new Map(gfx.nodes.map(n => [n.id, n]));
+  let added = 0;
+  for (const n of (delta.nodes || [])) {
+    if (!n || !n.id || nodeIndex.has(n.id)) continue;
+    // Seed new nodes near the centre so they fly outward under the forces.
+    n.x = (Math.random()-0.5)*60; n.y = (Math.random()-0.5)*60;
+    nodeIndex.set(n.id, n);
+    gfx.nodes.push(n);
+    activeCategories.add(n.type || 'Unknown');
+    added++;
+  }
+
+  const linkKeys = new Set(gfx.links.map(l => `${linkEndId(l.source)}|${linkEndId(l.target)}|${l.predicate}`));
+  for (const l of (delta.links || [])) {
+    if (!l) continue;
+    const key = `${l.source}|${l.target}|${l.predicate}`;
+    if (linkKeys.has(key)) continue;
+    // Only add a link if both endpoints exist (now) in the node set.
+    if (!nodeIndex.has(l.source) || !nodeIndex.has(l.target)) continue;
+    linkKeys.add(key);
+    gfx.links.push(l);
+  }
+
+  // Re-bind data to the forces and DOM, then reheat for the animated settle.
+  simulation.nodes(gfx.nodes);
+  simulation.force('link').links(gfx.links);
+  updateGraphViz();
+  buildLegend(gfx.nodes);
+  simulation.alpha(0.5).restart();
+
+  flashLiveBadge(added);
 }
 
 // ── LINKS MANAGER ──

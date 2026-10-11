@@ -12,13 +12,18 @@ FastAPI application exposing:
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from google.genai import types
+
+import fitz  # PyMuPDF — PDF text extraction
+
+from api.graph_events import hub
 
 from config import cfg
 from graph.merger import KGMerger
@@ -37,7 +42,7 @@ logger = logging.getLogger(__name__)
 
 security = HTTPBasic()
 
-def verify_yashvi(credentials: HTTPBasicCredentials = Depends(security)):
+def verify_ingestion_password(credentials: HTTPBasicCredentials = Depends(security)):
     expected_password = os.getenv("INGESTION_PASSWORD")
 
     # Fail closed: if no password is configured, ingestion is disabled rather
@@ -75,6 +80,9 @@ async def lifespan(app: FastAPI):
     retriever = Retriever(driver)
     synthesiser = Synthesiser()
     merger = KGMerger(driver)
+    # Capture the running loop so the (sync) ingestion path can broadcast live
+    # graph deltas to WebSocket clients via hub.publish_threadsafe().
+    hub.bind_loop(asyncio.get_running_loop())
     logger.info("Research agent ready")
     yield
     driver.close()
@@ -157,6 +165,130 @@ class GraphResponse(BaseModel):
     links: list[dict]
 
 
+# ── Helper Function: Live graph deltas over WebSocket ─────────────────────────
+
+def _n(name: str, ntype: str) -> dict:
+    """Shape a node exactly like the /graph endpoint so the frontend can reuse
+    its existing merge/render path verbatim."""
+    return {"id": name, "name": name, "type": ntype or "Unknown", "mention_count": 1}
+
+
+def build_ingest_delta(doc: dict, triples: list, results: list) -> dict:
+    """Build a `{nodes, links}` delta for one freshly-ingested document.
+
+    Derived from the in-memory extraction output (no extra Neo4j round-trip) and
+    deduplicated by id/edge so the payload is compact. Node/link shapes mirror
+    GET /graph so the client applies them through one code path. The frontend is
+    responsible for discarding ids it already has — deltas are advisory, not
+    authoritative, which keeps this resilient to fuzzy entity-resolution renames.
+    """
+    nodes: dict[str, dict] = {}
+    links: list[dict] = []
+    seen_links: set[tuple] = set()
+
+    # Paper node (if this was a paper ingest) plus its author/citation subgraph.
+    title = doc.get("title") if doc else None
+    if title:
+        nodes[title] = _n(title, "Paper")
+        for author in (doc.get("authors") or []):
+            author = (author or "").strip()
+            if not author:
+                continue
+            nodes.setdefault(author, _n(author, "Author"))
+            key = (author, title, "authored")
+            if key not in seen_links:
+                seen_links.add(key)
+                links.append({"source": author, "target": title,
+                              "predicate": "authored", "confidence": 1.0,
+                              "mention_count": 1, "sources": []})
+
+    # Extracted semantic triples (:RELATION edges).
+    for t in triples or []:
+        nodes.setdefault(t.subject, _n(t.subject, t.subject_type))
+        nodes.setdefault(t.obj, _n(t.obj, t.obj_type))
+        key = (t.subject, t.obj, t.predicate)
+        if key not in seen_links:
+            seen_links.add(key)
+            links.append({"source": t.subject, "target": t.obj,
+                          "predicate": t.predicate,
+                          "confidence": float(getattr(t, "confidence", 1.0) or 1.0),
+                          "mention_count": 1, "sources": []})
+
+    # Reified benchmark results: (:Model)->(:Result)->(:Dataset)/(:Metric).
+    for r in results or []:
+        model = (getattr(r, "model", "") or "").strip()
+        dataset = (getattr(r, "dataset", "") or "").strip()
+        metric = (getattr(r, "metric", "") or "").strip()
+        if not (model and dataset and metric):
+            continue
+        rid = f"{model}::{dataset}::{metric}"
+        nodes.setdefault(model, _n(model, "Model"))
+        nodes.setdefault(dataset, _n(dataset, "Dataset"))
+        nodes.setdefault(metric, _n(metric, "Metric"))
+        nodes.setdefault(rid, {"id": rid, "name": getattr(r, "value", "") or "Result",
+                               "type": "Result", "mention_count": 1})
+        for src, dst, pred in ((model, rid, "achieves"), (rid, dataset, "on"),
+                               (rid, metric, "measured_by")):
+            key = (src, dst, pred)
+            if key not in seen_links:
+                seen_links.add(key)
+                links.append({"source": src, "target": dst, "predicate": pred,
+                              "confidence": 1.0, "mention_count": 1, "sources": []})
+
+    return {"type": "graph_delta", "nodes": list(nodes.values()), "links": links}
+
+
+def broadcast_delta(doc: dict, triples: list, results: list) -> None:
+    """Best-effort publish of a document's delta to live WS clients.
+
+    Never raises into the ingestion path: a visualisation feature must not be
+    able to fail a MERGE. Skips the work entirely when nobody is listening.
+    """
+    try:
+        if hub.client_count == 0:
+            return
+        delta = build_ingest_delta(doc, triples, results)
+        if delta["nodes"] or delta["links"]:
+            hub.publish_threadsafe(delta)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("Graph delta broadcast skipped: %s", exc)
+
+
+# ── Helper Function: Extract text from an uploaded PDF (PyMuPDF) ──────────────
+
+# Guard rails for PDF ingestion.
+_MAX_PDF_BYTES = 25 * 1024 * 1024          # 25 MB upload cap
+_MAX_PDF_EXTRACT_CHARS = 200_000           # cap extracted text to bound LLM cost
+
+
+def extract_pdf_text(data: bytes) -> tuple[str, str]:
+    """Extract concatenated page text and a best-effort title from PDF *bytes*.
+
+    Returns (text, title). Title falls back to '' when PDF metadata has none;
+    the caller supplies a filename-based default. Raises ValueError on an
+    unreadable / non-PDF payload so the route can return a clean 400.
+    """
+    try:
+        doc = fitz.open(stream=data, filetype="pdf")
+    except Exception as exc:  # noqa: BLE001
+        raise ValueError(f"Could not open PDF: {exc}") from exc
+
+    try:
+        parts: list[str] = []
+        total = 0
+        for page in doc:
+            parts.append(page.get_text("text"))
+            total += len(parts[-1])
+            if total >= _MAX_PDF_EXTRACT_CHARS:
+                break
+        text = "\n".join(parts).strip()[:_MAX_PDF_EXTRACT_CHARS]
+        meta_title = (doc.metadata or {}).get("title", "") or ""
+    finally:
+        doc.close()
+
+    return text, meta_title.strip()
+
+
 # ── Helper Function: Generate Scientific Summary ──────────────────────────────
 
 def generate_paper_summary(paper_title: str, text: str, relations: list) -> str:
@@ -183,6 +315,32 @@ def generate_paper_summary(paper_title: str, text: str, relations: list) -> str:
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+@app.websocket("/ws/graph")
+async def ws_graph(websocket: WebSocket):
+    """Live graph delta stream.
+
+    On connect the server sends a `{"type": "hello"}` frame; thereafter it
+    pushes `{"type": "graph_delta", "nodes": [...], "links": [...]}` frames each
+    time a document is ingested. The client reconciles deltas against its own
+    node set, so no initial snapshot is sent here — the client already loaded
+    one via GET /graph. Inbound messages are ignored (one-way stream) but we
+    keep reading so the socket close handshake is detected promptly.
+    """
+    await hub.connect(websocket)
+    try:
+        await websocket.send_json({"type": "hello", "message": "graph stream connected"})
+        while True:
+            # We don't expect client messages; this await returns when the
+            # client disconnects, raising WebSocketDisconnect.
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        pass
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("Graph WS error: %s", exc)
+    finally:
+        await hub.disconnect(websocket)
 
 
 @app.post("/query", response_model=QueryResponse)
@@ -219,7 +377,7 @@ async def query(req: QueryRequest):
 
     return response
 
-@app.post("/ingest/arxiv", response_model=IngestResponse, dependencies=[Depends(verify_yashvi)])
+@app.post("/ingest/arxiv", response_model=IngestResponse, dependencies=[Depends(verify_ingestion_password)])
 async def ingest_arxiv_endpoint(req: IngestURLRequest):
     if not merger or not retriever:
         raise HTTPException(503, "Agent not initialised")
@@ -245,13 +403,17 @@ async def ingest_arxiv_endpoint(req: IngestURLRequest):
         retriever.index_document(doc)
         total_triples += len(triples)
 
+        # Push the newly-created subgraph to any live WebSocket viewers so the
+        # D3 canvas animates this document in as it lands.
+        broadcast_delta(doc, triples, results)
+
     return IngestResponse(
         documents_processed=len(docs),
         triples_extracted=total_triples
     )
 
 
-@app.post("/ingest/text", response_model=IngestResponse, dependencies=[Depends(verify_yashvi)])
+@app.post("/ingest/text", response_model=IngestResponse, dependencies=[Depends(verify_ingestion_password)])
 async def ingest_text_endpoint(req: IngestTextRequest):
     if not merger or not retriever:
         raise HTTPException(503, "Agent not initialised")
@@ -277,6 +439,77 @@ async def ingest_text_endpoint(req: IngestTextRequest):
         "abstract": req.text[:2000],
         "published_date": req.published_date
     })
+
+    # Live-stream this document's subgraph to connected WS viewers. The text
+    # path has no author/citation metadata, so pass a title-only doc.
+    broadcast_delta({"title": req.title}, triples, results)
+
+    return IngestResponse(documents_processed=1, triples_extracted=len(triples))
+
+
+@app.post("/ingest/pdf", response_model=IngestResponse, dependencies=[Depends(verify_ingestion_password)])
+async def ingest_pdf_endpoint(
+    file: UploadFile = File(...),
+    title: str = Form(""),
+    published_date: str = Form("Unknown"),
+):
+    """Ingest a full-text PDF (goes beyond abstracts).
+
+    Accepts multipart/form-data: a `file` (the PDF) plus optional `title` and
+    `published_date` fields. Text is extracted with PyMuPDF, then run through the
+    exact same pipeline as /ingest/text (triple + result extraction, idempotent
+    KG merge, chunk vector indexing, live WS delta). Protected by the ingestion
+    password like the other /ingest/* routes.
+    """
+    if not merger or not retriever:
+        raise HTTPException(503, "Agent not initialised")
+
+    filename = file.filename or "uploaded.pdf"
+    if not filename.lower().endswith(".pdf") and (file.content_type or "") != "application/pdf":
+        raise HTTPException(status_code=415, detail="Only PDF uploads are supported.")
+
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="Uploaded PDF is empty.")
+    if len(data) > _MAX_PDF_BYTES:
+        raise HTTPException(status_code=413, detail="PDF exceeds the 25 MB upload limit.")
+
+    try:
+        text, meta_title = extract_pdf_text(data)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    if not text:
+        raise HTTPException(
+            status_code=422,
+            detail="No extractable text found in the PDF (it may be a scanned image).",
+        )
+
+    # Title precedence: explicit form field > PDF metadata title > filename stem.
+    resolved_title = (title.strip() or meta_title or filename.rsplit("/", 1)[-1][:-4]).strip()
+    if not resolved_title:
+        resolved_title = "Untitled PDF"
+    doc_id = resolved_title
+
+    triples, results = extract_triples_and_results(
+        text, source_id=doc_id, published_date=published_date
+    )
+
+    merger.upsert_entity(resolved_title, "Document", {
+        "text": text,
+        "published_date": published_date,
+    })
+    merger.upsert_document_triples(triples, doc_id)
+    merger.upsert_results(results, doc_id)
+
+    retriever.index_document({
+        "id": doc_id,
+        "title": resolved_title,
+        "text": text,
+        "published_date": published_date,
+    })
+
+    broadcast_delta({"title": resolved_title}, triples, results)
 
     return IngestResponse(documents_processed=1, triples_extracted=len(triples))
 

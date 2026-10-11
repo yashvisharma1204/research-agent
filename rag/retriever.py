@@ -77,6 +77,63 @@ class GraphRetriever:
             logger.warning("Gemini entity extraction failed: %s", exc)
             return []
 
+    def resolve_seed_entities(self, seeds: list[str]) -> list[str]:
+        """Resolve raw query seed terms to canonical node names using the
+        `entity_name_embedding` vector index.
+
+        This is the retrieval-side counterpart to the ingest-time entity
+        resolution in KGMerger._resolve_entity. Substring matching alone misses
+        synonym/abbreviation pairs ("LLM" vs "Large Language Model") because they
+        share no common substring. Embedding each seed and querying the name
+        vector index bridges that gap, finally exercising the index the README
+        advertises for dedup.
+
+        Returns the union of the original seeds and every canonical name whose
+        name-embedding similarity to a seed is >= SEED_RESOLUTION_THRESHOLD
+        (loose, recall-oriented). The originals are kept so the downstream
+        substring match still works and nothing that resolved before regresses.
+        Best-effort: on any embedding/index failure the originals pass through.
+        """
+        if not seeds:
+            return []
+
+        resolved: dict[str, None] = {s: None for s in seeds}  # ordered set
+
+        try:
+            embeddings = _encode(seeds)
+        except Exception as exc:
+            logger.debug("Seed embedding unavailable, using raw seeds: %s", exc)
+            return list(resolved.keys())
+
+        cypher = """
+        CALL db.index.vector.queryNodes('entity_name_embedding', $k, $embedding)
+        YIELD node, score
+        WHERE score >= $threshold
+        RETURN node.name AS name, score
+        ORDER BY score DESC
+        """
+        try:
+            with self.driver.session() as session:
+                for i, seed in enumerate(seeds):
+                    records = session.run(
+                        cypher,
+                        k=cfg.SEED_RESOLUTION_TOP_K,
+                        embedding=embeddings[i].tolist(),
+                        threshold=cfg.SEED_RESOLUTION_THRESHOLD,
+                    ).data()
+                    for rec in records:
+                        name = rec["name"]
+                        if name not in resolved:
+                            logger.debug(
+                                "Seed resolution (vector): '%s' -> '%s' (sim=%.3f)",
+                                seed, name, rec["score"],
+                            )
+                            resolved[name] = None
+        except Exception as exc:
+            logger.warning("Vector seed resolution unavailable (%s); using raw seeds", exc)
+
+        return list(resolved.keys())
+
     def multi_hop_traverse(
         self,
         entity_names: list[str],
@@ -89,11 +146,20 @@ class GraphRetriever:
         limit = limit or cfg.GRAPH_TRIPLE_LIMIT
         if not entity_names:
             return []
-            
-        # Variable length multi-hop matching (1 to 2 hops deep) targeting the custom :RELATION edge type
+
+        # Resolve raw seeds to canonical node names via the name-embedding vector
+        # index so abbreviations/synonyms reach the right node. Resolved names
+        # are exact node names, so they can be matched exactly (index-backed) in
+        # addition to the original loose substring match.
+        resolved_seeds = self.resolve_seed_entities(entity_names)
+
+        # Variable length multi-hop matching (1 to 2 hops deep) targeting the custom :RELATION edge type.
+        # A node seeds the traversal if it matches a resolved name EXACTLY, or if
+        # any raw term is a case-insensitive substring of its name (legacy path).
         cypher = """
         MATCH (seed:Entity)
-        WHERE ANY(s IN $seeds WHERE toLower(seed.name) CONTAINS toLower(s))
+        WHERE seed.name IN $resolved
+           OR ANY(s IN $seeds WHERE toLower(seed.name) CONTAINS toLower(s))
         MATCH path = (seed)-[r*1..2]-(neighbor:Entity)
         WHERE seed <> neighbor
         UNWIND relationships(path) AS rel
@@ -107,7 +173,7 @@ class GraphRetriever:
         """
         
         with self.driver.session() as session:
-            records = session.run(cypher, seeds=entity_names).data()
+            records = session.run(cypher, seeds=entity_names, resolved=resolved_seeds).data()
 
         processed_triples = []
         for r in records:
@@ -245,6 +311,12 @@ class Retriever:
         fetching), but the retrieval vectors now live on :Chunk nodes — the
         entity's own vector space is reserved for name-based resolution.
         Re-ingesting a document replaces its chunks idempotently.
+
+        Cache invalidation: the cached Gemini `summary` is removed on every
+        re-ingest. The summary is derived from the node's text + connected
+        relations, both of which can change when a document is re-ingested with
+        new content; dropping it forces /api/paper/summary to lazily regenerate
+        on next request instead of serving a stale summary forever.
         """
         doc_id = doc.get("title") or doc.get("id", "")
         if not doc_id:
@@ -259,6 +331,7 @@ class Retriever:
         MATCH (e:Entity {name: $name})
         SET e.text = $text,
             e.published_date = CASE WHEN $pub_date <> 'Unknown' THEN $pub_date ELSE COALESCE(e.published_date, 'Unknown') END
+        REMOVE e.summary
         RETURN count(e) AS matched_count
         """
         with self.driver.session() as s:
