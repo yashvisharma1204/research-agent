@@ -56,6 +56,40 @@ class ScoreResult:
         return bool(self.model.strip() and self.dataset.strip() and self.metric.strip())
 
 
+@dataclass
+class Contribution:
+    """A reified *contribution* of a paper: the thing the paper actually did.
+
+    Flat triples shatter a paper's real contribution into disconnected Concept
+    nodes joined by weak `related_to` edges, which the retriever scores as
+    noise. A Contribution captures the whole claim as one navigable structure:
+
+        (:Paper)-[:MAKES_CLAIM]->(:Contribution {statement, kind})
+        (:Contribution)-[:ADDRESSES]->(target)   # the problem/task tackled
+        (:Contribution)-[:VIA]->(mechanism)       # how it was tackled
+
+    `kind` is a controlled vocabulary so contributions are filterable:
+    proposes_method | fixes_limitation | improves_metric | new_dataset.
+    """
+    statement: str
+    kind: str = "proposes_method"
+    addresses: str = ""          # Task / Concept the contribution tackles
+    addresses_type: str = "Concept"
+    via: str = ""                # mechanism: ArchitecturalInnovation / TrainingObjective
+    via_type: str = "ArchitecturalInnovation"
+    source_id: str = ""
+
+    _VALID_KINDS = {"proposes_method", "fixes_limitation", "improves_metric", "new_dataset"}
+
+    def is_valid(self) -> bool:
+        # A contribution is only useful if it has a statement AND at least one
+        # structural anchor (what it addresses or the mechanism it uses).
+        return bool(self.statement.strip()) and bool(self.addresses.strip() or self.via.strip())
+
+    def normalised_kind(self) -> str:
+        return self.kind if self.kind in self._VALID_KINDS else "proposes_method"
+
+
 # <--- Updated Prompt with Temporal Anchor Rules --->
 _SYSTEM_PROMPT = """You are an advanced scientific knowledge graph extractor.
 Given a text, extract factual (subject, predicate, object) triples and rich property payloads.
@@ -88,7 +122,7 @@ You MUST use the provided Publication Date to anchor relative temporal claims. U
 - SUPERSEDES: The current text replaces, outperforms, or deprecates a previous method.
 - DERIVED_FROM: The model or data originates from a prior source.
 
-Return ONLY a valid JSON object (no markdown, no explanation) with two keys, "triples" and "results".
+Return ONLY a valid JSON object (no markdown, no explanation) with three keys, "triples", "results", and "contributions".
 
 "triples" is an array where each element has the format: {
     "subject": "...",
@@ -108,7 +142,20 @@ Return ONLY a valid JSON object (no markdown, no explanation) with two keys, "tr
     "metric": "evaluation metric (e.g., Accuracy, F1, BLEU)",
     "value": "the numeric score as stated (e.g., '88.5', '92.3%')"
   }
-Only include a result when the text explicitly reports a model's score on a named dataset/benchmark. Do not invent numbers."""
+Only include a result when the text explicitly reports a model's score on a named dataset/benchmark. Do not invent numbers.
+
+"contributions" is an array (may be empty) capturing the PRIMARY contributions the paper itself makes — the things it actually proposes or achieves, not background facts. This is the most important output: it is what makes the paper's content retrievable, so prefer 1-4 precise contributions over many vague ones. Each element: {
+    "statement": "one concise sentence describing the contribution in the paper's own terms",
+    "kind": "proposes_method | fixes_limitation | improves_metric | new_dataset",
+    "addresses": "the Task or Concept (the PROBLEM) this contribution tackles, e.g. 'Long-Range Dependency Modeling'",
+    "addresses_type": "Task|Concept",
+    "via": "the specific mechanism used (an ArchitecturalInnovation / TrainingObjective / Model component), e.g. 'Self-Attention'",
+    "via_type": "ArchitecturalInnovation|TrainingObjective|Model|LossFunction"
+  }
+Rules for contributions:
+- Only extract contributions the TEXT itself makes; do not attribute other papers' work.
+- 'addresses' is the problem; 'via' is the solution mechanism. At least one of the two must be present.
+- Keep 'statement' factual and specific — no marketing language."""
 
 BANNED_ENTITY_KEYWORDS = {
     "dataset", "novel dataset", "applicants", "million", "billion", 
@@ -185,6 +232,55 @@ def _parse_results(results_data: list, source_id: str) -> list[ScoreResult]:
             out.append(r)
     return out
 
+
+def _parse_contributions(contrib_data: list, source_id: str) -> list[Contribution]:
+    """Convert raw contribution dicts into validated Contribution objects."""
+    out: list[Contribution] = []
+    for item in contrib_data or []:
+        if not isinstance(item, dict):
+            continue
+        c = Contribution(
+            statement=str(item.get("statement", "") or "").strip(),
+            kind=str(item.get("kind", "") or "proposes_method").strip(),
+            addresses=str(item.get("addresses", "") or "").strip(),
+            addresses_type=str(item.get("addresses_type", "") or "Concept").strip() or "Concept",
+            via=str(item.get("via", "") or "").strip(),
+            via_type=str(item.get("via_type", "") or "ArchitecturalInnovation").strip() or "ArchitecturalInnovation",
+            source_id=source_id,
+        )
+        if c.is_valid():
+            out.append(c)
+    return out
+
+
+def _contributions_from_text(cleaned_text: str) -> list:
+    """Pull the raw "contributions" array out of an extractor payload.
+
+    Kept separate from _safe_parse_payload so that function's (triples, results)
+    signature and its callers/tests stay unchanged. Best-effort: any parse
+    failure yields an empty list (contributions are additive, never required).
+    """
+    stripped = cleaned_text.lstrip()
+    if stripped.startswith("["):
+        return []  # legacy bare-array form has no contributions
+    try:
+        obj = json.loads(cleaned_text)
+    except json.JSONDecodeError:
+        last_close = cleaned_text.rfind("}")
+        if last_close == -1:
+            return []
+        candidate = cleaned_text[: last_close + 1]
+        for _ in range(3):
+            try:
+                obj = json.loads(candidate)
+                break
+            except json.JSONDecodeError:
+                candidate += "}"
+        else:
+            return []
+    return obj.get("contributions", []) if isinstance(obj, dict) else []
+
+
 class LLMExtractor:
     def __init__(self, llm_client=None):
         # `llm_client` may be injected (e.g. in tests) exposing a `.generate(prompt)`
@@ -192,6 +288,7 @@ class LLMExtractor:
         self.llm_client = llm_client
         self._client = None if llm_client is not None else get_client()
         self.last_results: list[ScoreResult] = []
+        self.last_contributions: list[Contribution] = []
 
     def _generate(self, prompt: str, max_output_tokens: int = 8192) -> str:
         """Run a single generation and return the raw text."""
@@ -228,6 +325,7 @@ class LLMExtractor:
         metadata = metadata or {}
         prompt = self._build_context_prompt(text, metadata)
         self.last_results: list[ScoreResult] = []
+        self.last_contributions: list[Contribution] = []
 
         try:
             raw_text = self._generate(prompt, max_output_tokens=8192)
@@ -250,6 +348,9 @@ class LLMExtractor:
                     temporal_rationale=item.get("temporal_rationale", "") # <--- Added extraction mapping
                 ))
             self.last_results = _parse_results(results_data, source_id)
+            self.last_contributions = _parse_contributions(
+                _contributions_from_text(cleaned_text), source_id
+            )
             return triples
         except Exception as exc:
             logger.warning("LLM extraction failed for %s: %s", source_id, exc)
@@ -258,6 +359,8 @@ class LLMExtractor:
 class MultiPassLLMExtractor(LLMExtractor):
     def extract(self, text: str, source_id: str = "", metadata: dict = None) -> list[Triple]:
         metadata = metadata or {}
+        self.last_results: list[ScoreResult] = []
+        self.last_contributions: list[Contribution] = []
         
         # Pass 1: Broad Candidate Extraction
         pass_one_prompt = (
@@ -295,6 +398,9 @@ class MultiPassLLMExtractor(LLMExtractor):
                     temporal_rationale=item.get("temporal_rationale", "") # <--- Added extraction mapping
                 ))
             self.last_results = _parse_results(results_data, source_id)
+            self.last_contributions = _parse_contributions(
+                _contributions_from_text(cleaned_text), source_id
+            )
             return triples
         except Exception as exc:
             logger.warning("Multi-pass extraction failed for %s: %s", source_id, exc)
@@ -467,8 +573,25 @@ def extract_triples_and_results(
 ) -> tuple[list[Triple], list[ScoreResult]]:
     """Extract quality-filtered triples AND reified quantitative results in one pass.
 
-    Results are only kept when their model/dataset/metric all survive the
-    entity quality filter, keeping the reified subgraph clean.
+    Backward-compatible 2-tuple wrapper around
+    extract_triples_results_contributions (drops the contributions). Existing
+    callers that don't yet consume contributions keep working unchanged.
+    """
+    triples, results, _contribs = extract_triples_results_contributions(
+        text, source_id, published_date
+    )
+    return triples, results
+
+
+def extract_triples_results_contributions(
+    text: str, source_id: str = "", published_date: str = "Unknown"
+) -> tuple[list[Triple], list[ScoreResult], list[Contribution]]:
+    """Extract quality-filtered triples, reified results, AND reified
+    contributions in a SINGLE extraction pass.
+
+    Contributions capture what a paper actually does; they are only kept when
+    their structural anchors (addresses / via) survive the entity quality
+    filter, keeping the reified subgraph clean — same discipline as results.
     """
     metadata = {"publication_date": published_date}
 
@@ -493,4 +616,16 @@ def extract_triples_and_results(
         if is_high_quality_entity(r.model) and is_high_quality_entity(r.dataset) and is_high_quality_entity(r.metric)
     ]
 
-    return high_quality_triples, quality_results
+    raw_contribs = getattr(extractor, "last_contributions", []) or []
+    quality_contribs = []
+    for c in raw_contribs:
+        # Statement itself isn't an entity, but the structural anchors are nodes
+        # in the graph — require any present anchor to pass the quality filter.
+        addresses_ok = (not c.addresses) or is_high_quality_entity(c.addresses)
+        via_ok = (not c.via) or is_high_quality_entity(c.via)
+        if c.is_valid() and addresses_ok and via_ok:
+            quality_contribs.append(c)
+        else:
+            logger.info("Dropping low-quality contribution: %s", c.statement[:60])
+
+    return high_quality_triples, quality_results, quality_contribs

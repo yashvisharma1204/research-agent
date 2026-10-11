@@ -73,6 +73,11 @@ if not cfg.GEMINI_API_KEY:
 HIGH_SIGNAL_PREDICATES = {
     "replaces_component_with": 1.0,
     "introduces_training_objective": 0.95,
+    # Reified contribution edges — the paper's actual content. Weighted high so
+    # contribution paths dominate traversal over vague related_to co-occurrence.
+    "makes_claim": 0.95,
+    "addresses": 0.90,
+    "via": 0.90,
     "ameliorates_limitation_of": 0.90,
     "benchmarked_superior_to": 0.85,
     "proposes": 0.80,

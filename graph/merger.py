@@ -7,6 +7,7 @@ when the same real-world entity appears under slightly different names.
 from __future__ import annotations
 
 import logging
+import hashlib
 import numpy as np
 from neo4j import Driver
 
@@ -34,6 +35,7 @@ ONTOLOGY_LABELS = {
     "Paper",
     "Document",
     "Result",
+    "Contribution",
 }
 
 
@@ -491,6 +493,85 @@ class KGMerger:
                     logger.debug("Result reification failed (%s): %s", result_id, exc)
         return written
 
+    # ── Contribution reification ──────────────────────────────────────────────
+
+    def upsert_contributions(self, contributions: list, source_id: str,
+                             paper_name: str | None = None) -> int:
+        """Write reified paper contributions as a navigable subgraph:
+
+            (:Paper)-[:RELATION {type:'makes_claim'}]->(:Contribution)
+            (:Contribution)-[:RELATION {type:'addresses'}]->(target)   # problem
+            (:Contribution)-[:RELATION {type:'via'}]->(mechanism)      # solution
+
+        Design notes:
+        * The Contribution is a first-class :Entity:Contribution node so it takes
+          part in the retriever's generic (:Entity)-[:RELATION*1..2]-(:Entity)
+          traversal with ZERO retriever changes.
+        * Edges use the existing :RELATION {type: ...} pattern, and the predicate
+          types (makes_claim/addresses/via) are registered as HIGH_SIGNAL so they
+          outrank `related_to` noise in traversal scoring.
+        * The Contribution carries an explicit null name_embedding so these
+          reified claim nodes never pollute the entity name-resolution vector
+          index (same discipline as demoted authors).
+
+        *contributions* items are Contribution objects. *source_id* is the
+        provenance id stored on edges/nodes. *paper_name* is the :Paper node's
+        name (its title) that the makes_claim edge originates from; it differs
+        from source_id because the Paper node is keyed on title while source_id
+        is the document id. When paper_name is None the makes_claim edge is
+        skipped (contribution still written, just not linked to a paper).
+        Returns the number of contributions written.
+        """
+        written = 0
+        for c in contributions or []:
+            statement = getattr(c, "statement", "").strip()
+            if not statement:
+                continue
+            kind = c.normalised_kind() if hasattr(c, "normalised_kind") else "proposes_method"
+
+            # Deterministic id → re-ingesting the same claim is idempotent.
+            # Uses a stable hash (not Python's per-process-salted hash()).
+            digest = hashlib.sha1(statement.encode("utf-8")).hexdigest()[:12]
+            contrib_id = f"{source_id}::contrib::{digest}"
+
+            # The Contribution node itself (reified, no name embedding).
+            self.upsert_entity(
+                contrib_id, "Contribution",
+                {"statement": statement, "kind": kind, "source": source_id,
+                 "name_embedding": None},
+            )
+
+            # (:Paper)-[:makes_claim]->(:Contribution) — only when we know the
+            # paper node name. The paper node is upserted by upsert_paper first.
+            if paper_name:
+                self.upsert_triple(
+                    paper_name, "makes_claim", contrib_id, source_id,
+                    confidence=1.0, subj_type="Paper", obj_type="Contribution",
+                    skip_entity_upsert=True,
+                )
+
+            # (:Contribution)-[:addresses]->(problem)
+            if getattr(c, "addresses", "").strip():
+                self.upsert_entity(c.addresses, c.addresses_type or "Concept")
+                self.upsert_triple(
+                    contrib_id, "addresses", c.addresses, source_id,
+                    confidence=1.0, subj_type="Contribution",
+                    obj_type=c.addresses_type or "Concept",
+                    skip_entity_upsert=True,
+                )
+
+            # (:Contribution)-[:via]->(mechanism)
+            if getattr(c, "via", "").strip():
+                self.upsert_entity(c.via, c.via_type or "ArchitecturalInnovation")
+                self.upsert_triple(
+                    contrib_id, "via", c.via, source_id,
+                    confidence=1.0, subj_type="Contribution",
+                    obj_type=c.via_type or "ArchitecturalInnovation",
+                    skip_entity_upsert=True,
+                )
+            written += 1
+        return written
+
     # ── Vector Similarity Clustering ──────────────────────────────────────────
 
     def run_vector_clustering_job(self, threshold: float | None = None) -> int:
@@ -552,6 +633,7 @@ class KGMerger:
             vectors = s.run("MATCH (c:Chunk) WHERE c.embedding IS NOT NULL RETURN count(c) AS c").single()["c"]
             authors = s.run("MATCH (n:Author) RETURN count(n) AS c").single()["c"]
             results = s.run("MATCH (r:Result) RETURN count(r) AS c").single()["c"]
+            contributions = s.run("MATCH (c:Contribution) RETURN count(c) AS c").single()["c"]
 
         return {
             "entities": nodes,
@@ -560,4 +642,5 @@ class KGMerger:
             "vectors": vectors,
             "authors": authors,
             "results": results,
+            "contributions": contributions,
         }

@@ -28,7 +28,7 @@ from api.graph_events import hub
 from config import cfg
 from graph.merger import KGMerger
 from graph.neo4j_client import get_driver
-from ingestion.extractors import extract_triples, extract_triples_and_results
+from ingestion.extractors import extract_triples, extract_triples_and_results, extract_triples_results_contributions
 from ingestion.fetchers import fetch_foundational
 from rag.retriever import Retriever
 from rag.synthesiser import Synthesiser
@@ -392,13 +392,15 @@ async def ingest_arxiv_endpoint(req: IngestURLRequest):
         pub_date = doc.get("published_date") or "Unknown"
 
         # Pass the date into the extractor
-        triples, results = extract_triples_and_results(text, source_id=doc["id"], published_date=pub_date)
+        triples, results, contributions = extract_triples_results_contributions(text, source_id=doc["id"], published_date=pub_date)
 
         # Store paper as a first-class :Paper node (metadata + author/citation subgraph)
         merger.upsert_paper(doc)
 
         merger.upsert_document_triples(triples, doc["id"])
         merger.upsert_results(results, doc["id"])
+        # Reified contributions linked back to the :Paper node (keyed on title).
+        merger.upsert_contributions(contributions, doc["id"], paper_name=doc["title"])
 
         retriever.index_document(doc)
         total_triples += len(triples)
@@ -421,7 +423,7 @@ async def ingest_text_endpoint(req: IngestTextRequest):
     doc_id = req.doc_id or req.title
     
     # Pass the date into the extractor
-    triples, results = extract_triples_and_results(req.text, source_id=doc_id, published_date=req.published_date)
+    triples, results, contributions = extract_triples_results_contributions(req.text, source_id=doc_id, published_date=req.published_date)
 
     # Persist the date in Neo4j
     merger.upsert_entity(req.title, "Document", {
@@ -431,6 +433,8 @@ async def ingest_text_endpoint(req: IngestTextRequest):
     
     merger.upsert_document_triples(triples, doc_id)
     merger.upsert_results(results, doc_id)
+    # Reified contributions linked back to the :Document node (keyed on title).
+    merger.upsert_contributions(contributions, doc_id, paper_name=req.title)
 
     # Pass the date into the vector database
     retriever.index_document({
