@@ -72,10 +72,12 @@ Rules:
     Metric                  — evaluation metrics (e.g., BLEU, Perplexity, Accuracy)
     Task                    — problem settings a model addresses (e.g., Question Answering, Summarization, Image Classification)
     Concept                 — foundational abstract ideas (e.g., Hallucination, Weight Quantization)
-    Author                  — individual researchers / people (e.g., Ashish Vaswani, Yoshua Bengio)
     Organisation            — labs, universities, companies (e.g., Google DeepMind, OpenAI, Stanford)
     Paper                   — publication references
     Unknown                 — fallback type
+- Do NOT extract individual people / author names as entities. Author names are
+  provenance metadata handled elsewhere, not research content. If a contribution
+  must be attributed, attribute it to the Organisation, never a person.
 - Prefer the most specific type. Use Model for a named system; use ArchitecturalInnovation for one of its internal components; use Task for the problem it solves.
 - Extract a "properties" dictionary for each node containing technical attributes (e.g., parameters, dimensions, brief operational summaries if mentioned).
 - Predicates should be high-signal semantic verbs: replaces_component_with, introduces_training_objective, ameliorates_limitation_of, benchmarked_superior_to, proposes, uses_dataset, achieves_score_on, evaluated_on_task, developed_by, related_to.
@@ -475,6 +477,11 @@ def extract_triples_and_results(
 
     high_quality_triples = []
     for t in raw_triples:
+        # Defensive author drop: even if the LLM ignores the prompt and emits an
+        # Author-typed node, keep it out of the graph unless EXTRACT_AUTHORS.
+        if not cfg.EXTRACT_AUTHORS and "Author" in (t.subject_type, t.obj_type):
+            logger.debug("Dropping author triple: %s", t)
+            continue
         if is_high_quality_entity(t.subject) and is_high_quality_entity(t.obj):
             high_quality_triples.append(t)
         else:

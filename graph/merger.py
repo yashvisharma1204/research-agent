@@ -367,6 +367,7 @@ class KGMerger:
             return ""
 
         pub_date = doc.get("published_date") or "Unknown"
+        authors = [a.strip() for a in (doc.get("authors") or []) if a and a.strip()]
         props = {
             "url": doc.get("url", ""),
             "source": doc.get("source", ""),
@@ -375,10 +376,17 @@ class KGMerger:
             "venue": doc.get("venue", "") or "",
             "year": str(doc.get("year", "") or ""),
             "text": doc.get("abstract", "") or "",
+            # Authors live here as lightweight provenance, NOT as embedded
+            # :Author entities (which flood the graph + vector index). Still
+            # fully queryable via p.authors. See cfg.EXTRACT_AUTHORS.
+            "authors": authors,
         }
         paper_name = self.upsert_entity(title, "Paper", props)
 
-        self.upsert_authors(paper_name, doc.get("authors") or [])
+        # Only build the embedded author/citation subgraph when explicitly
+        # enabled. By default authors are the `authors` property set above.
+        if cfg.EXTRACT_AUTHORS:
+            self.upsert_authors(paper_name, authors)
         self.upsert_citations(paper_name, doc.get("references") or [])
         return paper_name
 
@@ -390,7 +398,10 @@ class KGMerger:
             author = (author or "").strip()
             if not author:
                 continue
-            canonical = self.upsert_entity(author, "Author")
+            # Explicit empty name_embedding keeps authors OUT of the entity
+            # vector index (they're metadata, not retrievable research content),
+            # while still letting the AUTHORED citation subgraph exist.
+            canonical = self.upsert_entity(author, "Author", {"name_embedding": None})
             cypher = """
             MATCH (a:Entity {name: $author})
             MATCH (p:Entity {name: $paper})

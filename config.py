@@ -32,6 +32,14 @@ class Config:
     # Triple extraction backend: "llm" | "rebel" | "gliner"
     TRIPLE_EXTRACTION_METHOD: str = os.getenv("TRIPLE_EXTRACTION_METHOD", "llm")
 
+    # Author handling. Authors are provenance metadata, not research content:
+    # as embedded :Author entities they flood the graph + vector index and
+    # crowd out concepts/models/results. When False (default) authors are stored
+    # as a plain `authors` list property on the Paper node — no :Author nodes,
+    # no name embeddings, no AUTHORED edges. Set EXTRACT_AUTHORS=true to restore
+    # the full author/citation subgraph (still without name embeddings).
+    EXTRACT_AUTHORS: bool = os.getenv("EXTRACT_AUTHORS", "false").lower() == "true"
+
     # Similarity threshold for entity resolution fuzzy merge
     ENTITY_MERGE_THRESHOLD: float = float(os.getenv("ENTITY_MERGE_THRESHOLD", "0.92"))
 
