@@ -17,6 +17,32 @@ from utils.gemini import get_client
 logger = logging.getLogger(__name__)
 
 
+# A URL/DOI is provenance (belongs on :Paper.url or a :CITES edge), never a
+# first-class semantic entity. The LLM occasionally emits raw links (e.g.
+# "http://arxiv.org/abs/1706.03762") as a triple subject/object; those collapse
+# into meaningless, un-dedupable nodes in the graph. Drop them at the source.
+_URL_RE = re.compile(r"^\s*(?:https?://|www\.|ftp://|doi:|10\.\d{4,}/)", re.IGNORECASE)
+
+
+def _is_url_like(value: str) -> bool:
+    """True if *value* looks like a bare URL/DOI rather than a named entity."""
+    if not value:
+        return False
+    v = value.strip()
+    if _URL_RE.match(v):
+        return True
+    # Catch bare domains with a path, e.g. "arxiv.org/abs/1706.03762", that lack
+    # a scheme but are still just links, not entities.
+    if re.match(r"^[\w.-]+\.(?:org|com|net|edu|gov|io|ai)/\S+$", v, re.IGNORECASE):
+        return True
+    return False
+
+
+def _valid_entity_name(value: str) -> bool:
+    """A usable entity name is non-empty and not a bare URL/DOI."""
+    return bool(value and value.strip()) and not _is_url_like(value)
+
+
 @dataclass
 class Triple:
     subject: str
@@ -335,10 +361,21 @@ class LLMExtractor:
 
             triples = []
             for item in data:
+                subject = item.get("subject", "")
+                obj = item.get("object", "")
+                # Drop triples whose endpoints are bare URLs/DOIs or empty — they
+                # are provenance, not semantic entities, and only create
+                # meaningless un-dedupable nodes in the graph.
+                if not (_valid_entity_name(subject) and _valid_entity_name(obj)):
+                    logger.debug(
+                        "Skipping URL/empty triple for %s: (%r)-[%s]->(%r)",
+                        source_id, subject, item.get("predicate"), obj,
+                    )
+                    continue
                 triples.append(Triple(
-                    subject=item.get("subject", ""),
+                    subject=subject,
                     predicate=item.get("predicate", "related_to"),
-                    obj=item.get("object", ""),
+                    obj=obj,
                     confidence=float(item.get("confidence", 1.0)),
                     source_id=source_id,
                     subject_type=item.get("subject_type", "Unknown"),
@@ -385,10 +422,21 @@ class MultiPassLLMExtractor(LLMExtractor):
 
             triples = []
             for item in data:
+                subject = item.get("subject", "")
+                obj = item.get("object", "")
+                # Drop triples whose endpoints are bare URLs/DOIs or empty — they
+                # are provenance, not semantic entities, and only create
+                # meaningless un-dedupable nodes in the graph.
+                if not (_valid_entity_name(subject) and _valid_entity_name(obj)):
+                    logger.debug(
+                        "Skipping URL/empty triple for %s: (%r)-[%s]->(%r)",
+                        source_id, subject, item.get("predicate"), obj,
+                    )
+                    continue
                 triples.append(Triple(
-                    subject=item.get("subject", ""),
+                    subject=subject,
                     predicate=item.get("predicate", "related_to"),
-                    obj=item.get("object", ""),
+                    obj=obj,
                     confidence=float(item.get("confidence", 1.0)),
                     source_id=source_id,
                     subject_type=item.get("subject_type", "Unknown"),
@@ -540,6 +588,12 @@ def is_high_quality_entity(entity_name: str) -> bool:
         return False
         
     clean_name = entity_name.strip()
+
+    # 0. URL/DOI rejection: a bare link is provenance (belongs on :Paper.url or
+    #    a :CITES edge), not a semantic entity. Covers every backend in one spot.
+    if _is_url_like(clean_name):
+        logger.debug("Entity filtered (URL/DOI): '%s'", clean_name)
+        return False
     
     # 1. Minimum Length Check: Must be at least 3 characters
     if len(clean_name) < 3:

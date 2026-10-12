@@ -397,7 +397,9 @@ async def ingest_arxiv_endpoint(req: IngestURLRequest):
         # Store paper as a first-class :Paper node (metadata + author/citation subgraph)
         merger.upsert_paper(doc)
 
-        merger.upsert_document_triples(triples, doc["id"])
+        # paper_name anchors the paper node to the entities extracted from its
+        # own abstract (:Paper)-[:MENTIONS]->(:Entity), so it is never an orphan.
+        merger.upsert_document_triples(triples, doc["id"], paper_name=doc["title"])
         merger.upsert_results(results, doc["id"])
         # Reified contributions linked back to the :Paper node (keyed on title).
         merger.upsert_contributions(contributions, doc["id"], paper_name=doc["title"])
@@ -431,7 +433,7 @@ async def ingest_text_endpoint(req: IngestTextRequest):
         "published_date": req.published_date,
     })
     
-    merger.upsert_document_triples(triples, doc_id)
+    merger.upsert_document_triples(triples, doc_id, paper_name=req.title)
     merger.upsert_results(results, doc_id)
     # Reified contributions linked back to the :Document node (keyed on title).
     merger.upsert_contributions(contributions, doc_id, paper_name=req.title)
@@ -503,7 +505,7 @@ async def ingest_pdf_endpoint(
         "text": text,
         "published_date": published_date,
     })
-    merger.upsert_document_triples(triples, doc_id)
+    merger.upsert_document_triples(triples, doc_id, paper_name=resolved_title)
     merger.upsert_results(results, doc_id)
 
     retriever.index_document({
@@ -630,7 +632,7 @@ async def get_graph(limit: int = 120):
     #    :Result nodes are NOT :Entity-labelled, so they are coalesced with a
     #    literal "Result" type for palette colouring on the frontend.
     structural_cypher = """
-    MATCH (a)-[r:AUTHORED|CITES|ACHIEVES|ON|MEASURED_BY]->(b)
+    MATCH (a)-[r:AUTHORED|CITES|ACHIEVES|ON|MEASURED_BY|MENTIONS]->(b)
     RETURN
         a.name AS s_name,
         coalesce(a.type, head([l IN labels(a) WHERE l <> 'Entity'])) AS s_type,
@@ -680,8 +682,12 @@ async def get_graph(limit: int = 120):
         isolated_records = session.run(isolated_cypher, node_limit=limit * 4).data()
 
     for rec in relation_records:
-        s_id = rec.get("s_name") or "?"
-        e_id = rec.get("e_name") or "?"
+        s_id = rec.get("s_name")
+        e_id = rec.get("e_name")
+        # A relation whose endpoint has no name is a malformed node — skip it
+        # rather than collapsing every such edge into one shared "?" hub.
+        if not s_id or not e_id:
+            continue
         add_node(s_id, rec.get("s_type"), rec.get("s_mention"))
         add_node(e_id, rec.get("e_type"), rec.get("e_mention"))
         links.append({
@@ -694,8 +700,10 @@ async def get_graph(limit: int = 120):
         })
 
     for rec in structural_records:
-        s_id = rec.get("s_name") or "?"
-        e_id = rec.get("e_name") or "?"
+        s_id = rec.get("s_name")
+        e_id = rec.get("e_name")
+        if not s_id or not e_id:
+            continue
         add_node(s_id, rec.get("s_type"), rec.get("s_mention"))
         add_node(e_id, rec.get("e_type"), rec.get("e_mention"))
         links.append({

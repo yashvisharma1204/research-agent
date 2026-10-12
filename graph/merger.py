@@ -233,7 +233,8 @@ class KGMerger:
 
     # ── Batched document upsert ───────────────────────────────────────────────
 
-    def upsert_document_triples(self, triples: list, source_id: str) -> int:
+    def upsert_document_triples(self, triples: list, source_id: str,
+                                paper_name: str | None = None) -> int:
         """Upsert all triples of one document with batched embedding + dedup.
 
         Latency optimisation over calling upsert_entity/upsert_triple per triple:
@@ -343,6 +344,7 @@ class KGMerger:
 
         # 6. Write triples using the resolved names; skip per-triple entity upsert.
         written = 0
+        linked_names: set[str] = set()
         for t in triples:
             subj = resolved_name.get((t.subject, t.subject_type), t.subject)
             obj = resolved_name.get((t.obj, t.obj_type), t.obj)
@@ -351,8 +353,41 @@ class KGMerger:
                 subj_type=t.subject_type, obj_type=t.obj_type,
                 skip_entity_upsert=True,
             )
+            linked_names.update((subj, obj))
             written += 1
+
+        # Anchor the paper/document node to the entities extracted from its own
+        # text so it is never an orphan. Uses the post-dedup *resolved* names so
+        # the MATCH always hits a node that actually exists.
+        if paper_name:
+            self._link_paper_to_names(paper_name, linked_names)
         return written
+
+    def _link_paper_to_names(self, paper_name: str, names) -> int:
+        """MERGE (:Paper)-[:MENTIONS]->(:Entity) for each resolved entity name.
+
+        Internal helper used by upsert_document_triples (where resolved canonical
+        names are already known). MENTIONS is a structural edge — it anchors the
+        paper node visually/structurally without adding a weighted :RELATION that
+        would skew predicate-based traversal scoring.
+        """
+        targets = [n for n in {(x or "").strip() for x in names} if n and n != paper_name]
+        if not paper_name or not targets:
+            return 0
+        cypher = """
+        MATCH (p:Entity {name: $paper})
+        UNWIND $names AS target_name
+        MATCH (e:Entity {name: target_name})
+        WHERE e <> p
+        MERGE (p)-[:MENTIONS]->(e)
+        """
+        with self.driver.session() as s:
+            try:
+                s.run(cypher, paper=paper_name, names=targets)
+            except Exception as exc:
+                logger.debug("MENTIONS linking failed for '%s': %s", paper_name, exc)
+                return 0
+        return len(targets)
 
     # ── First-class Paper + literature subgraph ───────────────────────────────
 
