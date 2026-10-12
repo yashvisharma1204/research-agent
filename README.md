@@ -369,7 +369,7 @@ All endpoints are served via FastAPI with automatic OpenAPI documentation availa
 ## Frontend System Engineering & Graph Physics
 
 The frontend UI (`index.html`) is designed for high-throughput visualization without the runtime overhead of complex JavaScript frameworks.
-<img width="1512" height="827" alt="image" src="https://github.com/user-attachments/assets/1c261f2e-bde3-4190-bc87-6bbfbfb6f8b4" />
+<img width="3024" height="1722" alt="image" src="https://github.com/user-attachments/assets/17026d3b-054c-4710-ba53-7cfcf9e1b9ca" />
 
 
 
