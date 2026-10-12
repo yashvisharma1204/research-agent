@@ -392,7 +392,7 @@ async def ingest_arxiv_endpoint(req: IngestURLRequest):
         pub_date = doc.get("published_date") or "Unknown"
 
         # Pass the date into the extractor
-        triples, results, contributions = extract_triples_results_contributions(text, source_id=doc["id"], published_date=pub_date)
+        triples, results, contributions = extract_triples_results_contributions(text, source_id=doc["id"], published_date=pub_date, paper_title=doc["title"])
 
         # Store paper as a first-class :Paper node (metadata + author/citation subgraph)
         merger.upsert_paper(doc)
@@ -425,7 +425,7 @@ async def ingest_text_endpoint(req: IngestTextRequest):
     doc_id = req.doc_id or req.title
     
     # Pass the date into the extractor
-    triples, results, contributions = extract_triples_results_contributions(req.text, source_id=doc_id, published_date=req.published_date)
+    triples, results, contributions = extract_triples_results_contributions(req.text, source_id=doc_id, published_date=req.published_date, paper_title=req.title)
 
     # Persist the date in Neo4j
     merger.upsert_entity(req.title, "Document", {
@@ -498,7 +498,7 @@ async def ingest_pdf_endpoint(
     doc_id = resolved_title
 
     triples, results = extract_triples_and_results(
-        text, source_id=doc_id, published_date=published_date
+        text, source_id=doc_id, published_date=published_date, paper_title=resolved_title
     )
 
     merger.upsert_entity(resolved_title, "Document", {

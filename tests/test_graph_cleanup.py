@@ -141,3 +141,82 @@ def test_no_mentions_without_paper_name(monkeypatch):
     )
     # paper_name omitted → no MENTIONS edges written.
     assert driver.mentions == []
+
+
+# ── Self-reference anaphor rewrite ──────────────────────────────────────────
+
+def test_canonicalise_self_reference_rewrites_anaphors():
+    title = "Attention Is All You Need"
+    assert ex._canonicalise_self_reference("This paper", title) == title
+    assert ex._canonicalise_self_reference("this paper", title) == title
+    assert ex._canonicalise_self_reference("This paper.", title) == title  # trailing dot
+    assert ex._canonicalise_self_reference("We", title) == title
+    assert ex._canonicalise_self_reference("Our method", title) == title
+    # Real entities pass through untouched.
+    assert ex._canonicalise_self_reference("Transformer", title) == "Transformer"
+    # No-op when the title is unknown.
+    assert ex._canonicalise_self_reference("This paper", "") == "This paper"
+
+
+def test_self_reference_triple_survives_filter(monkeypatch):
+    """A ('This paper') -> [proposes] -> (Transformer) triple is rewritten to
+    the paper title and kept, instead of being dropped as a low-quality entity."""
+    class _T2:
+        def __init__(self, subject, obj):
+            self.subject = subject
+            self.obj = obj
+            self.predicate = "proposes"
+            self.confidence = 1.0
+            self.source_id = "doc1"
+            self.subject_type = "Paper"
+            self.obj_type = "Model"
+            self.subject_props = {}
+            self.obj_props = {}
+
+    class _FakeExtractor:
+        last_results = []
+        last_contributions = []
+
+        def extract(self, text, source_id="", metadata=None):
+            return [_T2("This paper", "Transformer")]
+
+    monkeypatch.setattr(ex, "get_extractor", lambda: _FakeExtractor())
+    monkeypatch.setattr(ex.cfg, "EXTRACT_AUTHORS", False, raising=False)
+
+    triples, _r, _c = ex.extract_triples_results_contributions(
+        "irrelevant", "doc1", paper_title="Attention Is All You Need"
+    )
+    assert len(triples) == 1
+    assert triples[0].subject == "Attention Is All You Need"
+    assert triples[0].obj == "Transformer"
+
+
+def test_self_reference_triple_dropped_without_title(monkeypatch):
+    """Without a known title the anaphor can't be rewritten, so 'This paper'
+    fails the quality filter and the triple is dropped (prior behaviour)."""
+    class _T2:
+        def __init__(self):
+            self.subject = "This paper"
+            self.obj = "Transformer"
+            self.predicate = "proposes"
+            self.confidence = 1.0
+            self.source_id = "doc1"
+            self.subject_type = "Paper"
+            self.obj_type = "Model"
+            self.subject_props = {}
+            self.obj_props = {}
+
+    class _FakeExtractor:
+        last_results = []
+        last_contributions = []
+
+        def extract(self, text, source_id="", metadata=None):
+            return [_T2()]
+
+    monkeypatch.setattr(ex, "get_extractor", lambda: _FakeExtractor())
+    monkeypatch.setattr(ex.cfg, "EXTRACT_AUTHORS", False, raising=False)
+
+    triples, _r, _c = ex.extract_triples_results_contributions(
+        "irrelevant", "doc1"
+    )
+    assert triples == []
