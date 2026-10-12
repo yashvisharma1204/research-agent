@@ -43,6 +43,31 @@ def _valid_entity_name(value: str) -> bool:
     return bool(value and value.strip()) and not _is_url_like(value)
 
 
+# Self-referential anaphors the LLM uses instead of naming the paper, e.g.
+# "This paper proposes T5". If left as-is they're junk entities (rejected by the
+# quality filter), which silently discards the paper's own highest-signal
+# contribution triples. Rewriting them to the paper title both saves the triple
+# AND anchors the paper node to what it proposes/introduces.
+_SELF_REF_ANAPHORS = {
+    "this paper", "the paper", "our paper", "this work", "the work",
+    "our work", "this study", "the study", "our study", "this approach",
+    "our approach", "the proposed method", "our method", "this method",
+    "the authors", "we", "our model", "the model proposed", "present work",
+    "this article", "the article", "our contribution",
+}
+
+
+def _canonicalise_self_reference(name: str, paper_title: str) -> str:
+    """Rewrite a self-referential anaphor ("This paper", "We", ...) to the paper
+    title so the triple survives and anchors the paper. Non-anaphors pass through
+    unchanged. No-op when no paper_title is known."""
+    if not paper_title:
+        return name
+    if (name or "").strip().lower().rstrip(".") in _SELF_REF_ANAPHORS:
+        return paper_title
+    return name
+
+
 @dataclass
 class Triple:
     subject: str
@@ -616,14 +641,16 @@ def is_high_quality_entity(entity_name: str) -> bool:
     return True
 
 
-def extract_triples(text: str, source_id: str = "", published_date: str = "Unknown") -> list[Triple]:
+def extract_triples(text: str, source_id: str = "", published_date: str = "Unknown",
+                    paper_title: str = "") -> list[Triple]:
     """Convenience wrapper — uses whichever backend is configured and applies quality filters."""
-    triples, _results = extract_triples_and_results(text, source_id, published_date)
+    triples, _results = extract_triples_and_results(text, source_id, published_date, paper_title)
     return triples
 
 
 def extract_triples_and_results(
-    text: str, source_id: str = "", published_date: str = "Unknown"
+    text: str, source_id: str = "", published_date: str = "Unknown",
+    paper_title: str = "",
 ) -> tuple[list[Triple], list[ScoreResult]]:
     """Extract quality-filtered triples AND reified quantitative results in one pass.
 
@@ -632,13 +659,14 @@ def extract_triples_and_results(
     callers that don't yet consume contributions keep working unchanged.
     """
     triples, results, _contribs = extract_triples_results_contributions(
-        text, source_id, published_date
+        text, source_id, published_date, paper_title
     )
     return triples, results
 
 
 def extract_triples_results_contributions(
-    text: str, source_id: str = "", published_date: str = "Unknown"
+    text: str, source_id: str = "", published_date: str = "Unknown",
+    paper_title: str = "",
 ) -> tuple[list[Triple], list[ScoreResult], list[Contribution]]:
     """Extract quality-filtered triples, reified results, AND reified
     contributions in a SINGLE extraction pass.
@@ -654,6 +682,12 @@ def extract_triples_results_contributions(
 
     high_quality_triples = []
     for t in raw_triples:
+        # Rewrite self-referential anaphors ("This paper", "We", ...) to the
+        # paper title so the paper's own contribution triples survive the quality
+        # filter and anchor the paper node, instead of being silently dropped.
+        t.subject = _canonicalise_self_reference(t.subject, paper_title)
+        t.obj = _canonicalise_self_reference(t.obj, paper_title)
+
         # Defensive author drop: even if the LLM ignores the prompt and emits an
         # Author-typed node, keep it out of the graph unless EXTRACT_AUTHORS.
         if not cfg.EXTRACT_AUTHORS and "Author" in (t.subject_type, t.obj_type):
@@ -673,6 +707,9 @@ def extract_triples_results_contributions(
     raw_contribs = getattr(extractor, "last_contributions", []) or []
     quality_contribs = []
     for c in raw_contribs:
+        # Rewrite self-referential anchors to the title (same reason as triples).
+        c.addresses = _canonicalise_self_reference(c.addresses, paper_title)
+        c.via = _canonicalise_self_reference(c.via, paper_title)
         # Statement itself isn't an entity, but the structural anchors are nodes
         # in the graph — require any present anchor to pass the quality filter.
         addresses_ok = (not c.addresses) or is_high_quality_entity(c.addresses)

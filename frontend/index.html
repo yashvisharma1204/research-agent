@@ -880,6 +880,27 @@ label {
 // ── UTILS ──
 const fmt  = t => t ? String(t).replace(/([a-z])([A-Z])/g,'$1 $2') : '';
 const esc  = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+// Minimal, XSS-safe markdown renderer for chat answers: escape ALL HTML first,
+// then re-introduce only a safe inline subset (**bold**, *italic*, `code`),
+// bullet lists (- / *), and paragraph breaks. The LLM returns markdown like
+// "**Point:** ..." which previously showed the literal asterisks.
+function mdLite(src){
+  let t = esc(String(src == null ? '' : src));
+  // Bold then italic (bold first so **x** isn't eaten by the italic rule).
+  t = t.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+  t = t.replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>');
+  t = t.replace(/`([^`]+)`/g, '<code>$1</code>');
+  // Bullet lines -> <li>, grouped into a single <ul>.
+  const lines = t.split(/\r?\n/);
+  let html = '', inList = false;
+  for (const line of lines){
+    const m = line.match(/^\s*[-*]\s+(.*)$/);
+    if (m){ if(!inList){ html+='<ul style="margin:4px 0 4px 18px;padding:0;">'; inList=true; } html+=`<li>${m[1]}</li>`; }
+    else { if(inList){ html+='</ul>'; inList=false; } if(line.trim()) html+=`<div>${line}</div>`; }
+  }
+  if (inList) html+='</ul>';
+  return html || esc(String(src||''));
+}
 const BASE = () => document.getElementById('apiUrl').value.replace(/\/$/,'');
 
 // ── PALETTE ──
@@ -1051,7 +1072,7 @@ async function sendQuery() {
     const d = await (await fetch(BASE()+'/query',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q,include_context:true})})).json();
     const route = (d.routing_strategy||d.route||'HYBRID').toLowerCase();
     const cls = route.includes('cypher')?'route-cypher':route.includes('vector')?'route-vector':'route-hybrid';
-    chatArea.innerHTML += `<div class="message assistant"><div class="msg-bubble"><span class="route-tag ${cls}">${esc(route.toUpperCase())}</span><div>${esc(d.answer||d.response||'No response.')}</div></div></div>`;
+    chatArea.innerHTML += `<div class="message assistant"><div class="msg-bubble"><span class="route-tag ${cls}">${esc(route.toUpperCase())}</span><div>${mdLite(d.answer||d.response||'No response.')}</div></div></div>`;
   } catch {
     chatArea.innerHTML += `<div class="message assistant"><div class="msg-bubble" style="color:#f87171">Failed to reach RAG service.</div></div>`;
   } finally { btn.disabled = false; chatArea.scrollTop = chatArea.scrollHeight; }
@@ -1298,17 +1319,21 @@ async function onNodeClick(e, d) {
       const data = await res.json();
       descEl.textContent = data.summary||data.error||'No summary generated.';
     } catch { descEl.textContent = d.summary||d.abstract||'Error generating summary.'; }
+  } else if (d.type === 'Contribution') {
+    // The node label is the owning paper's title; show the actual contribution
+    // claim as the body so the node reads meaningfully.
+    descEl.textContent = d.statement || 'Contribution extracted from the paper.';
   } else {
     descEl.textContent = d.summary||d.abstract||`${fmt(d.type||'Entity')} node extracted from the knowledge graph.`;
   }
 
   const linkCont = document.getElementById('drawerExternalLinkContainer');
   const linkBtn  = document.getElementById('drawerExternalLink');
-  if (d.url||d.arxiv_id||d.type==='Paper') {
+  if (d.url||d.arxiv_id||d.type==='Paper'||d.type==='Contribution') {
     linkCont.style.display = 'block';
     const raw = d.url||(d.arxiv_id?`https://arxiv.org/abs/${d.arxiv_id}`:`https://scholar.google.com/scholar?q=${encodeURIComponent(d.name||d.id)}`);
     linkBtn.href = (raw.startsWith('http')?raw:'#');
-    linkBtn.textContent = d.arxiv_id ? 'View arXiv ↗' : 'Search Scholar ↗';
+    linkBtn.textContent = (d.url||d.arxiv_id) ? 'View paper ↗' : 'Search Scholar ↗';
   } else { linkCont.style.display = 'none'; }
 
   drawer.classList.add('open');

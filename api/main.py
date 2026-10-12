@@ -617,11 +617,21 @@ async def get_graph(limit: int = 120):
         raise HTTPException(503, "Agent not initialised")
 
     # 1) Extracted semantic triples (generic :RELATION edges).
+    #    A :Contribution node's `name` is an internal id (prefixed with the
+    #    source doc URL). For display we surface the owning paper's TITLE (via
+    #    the makes_claim edge) so the node reads as the paper, while remaining a
+    #    first-class :Contribution. The paper url is passed through for the drawer.
     relation_cypher = """
     MATCH (s:Entity)-[r:RELATION]->(o:Entity)
+    OPTIONAL MATCH (sp:Paper)-[:RELATION {type:'makes_claim'}]->(s)
+      WHERE s:Contribution
+    OPTIONAL MATCH (op:Paper)-[:RELATION {type:'makes_claim'}]->(o)
+      WHERE o:Contribution
     RETURN
         s.name AS s_name, s.type AS s_type, s.mention_count AS s_mention,
+        coalesce(sp.name, s.name) AS s_label, sp.url AS s_url, s.statement AS s_statement,
         o.name AS e_name, o.type AS e_type, o.mention_count AS e_mention,
+        coalesce(op.name, o.name) AS e_label, op.url AS e_url, o.statement AS e_statement,
         r.type AS r_type, r.confidence AS r_confidence, r.mention_count AS r_mention, r.sources AS r_sources
     LIMIT $limit
     """
@@ -633,13 +643,19 @@ async def get_graph(limit: int = 120):
     #    literal "Result" type for palette colouring on the frontend.
     structural_cypher = """
     MATCH (a)-[r:AUTHORED|CITES|ACHIEVES|ON|MEASURED_BY|MENTIONS]->(b)
+    OPTIONAL MATCH (ap:Paper)-[:RELATION {type:'makes_claim'}]->(a)
+      WHERE a:Contribution
+    OPTIONAL MATCH (bp:Paper)-[:RELATION {type:'makes_claim'}]->(b)
+      WHERE b:Contribution
     RETURN
         a.name AS s_name,
         coalesce(a.type, head([l IN labels(a) WHERE l <> 'Entity'])) AS s_type,
         a.mention_count AS s_mention,
+        coalesce(ap.name, a.name) AS s_label, coalesce(ap.url, a.url) AS s_url, a.statement AS s_statement,
         b.name AS e_name,
         coalesce(b.type, head([l IN labels(b) WHERE l <> 'Entity'])) AS e_type,
         b.mention_count AS e_mention,
+        coalesce(bp.name, b.name) AS e_label, coalesce(bp.url, b.url) AS e_url, b.statement AS e_statement,
         type(r) AS r_type
     LIMIT $limit
     """
@@ -649,10 +665,13 @@ async def get_graph(limit: int = 120):
     isolated_cypher = """
     MATCH (n)
     WHERE (n:Entity OR n:Result)
+    OPTIONAL MATCH (np:Paper)-[:RELATION {type:'makes_claim'}]->(n)
+      WHERE n:Contribution
     RETURN
         n.name AS name,
         coalesce(n.type, head([l IN labels(n) WHERE l <> 'Entity'])) AS type,
-        n.mention_count AS mention
+        n.mention_count AS mention,
+        coalesce(np.name, n.name) AS label, coalesce(np.url, n.url) AS url, n.statement AS statement
     LIMIT $node_limit
     """
 
@@ -664,16 +683,27 @@ async def get_graph(limit: int = 120):
             return val["low"] + val.get("high", 0) * (2 ** 32)
         return int(val) if val is not None else 0
 
-    def add_node(node_id, node_type, mention):
+    def add_node(node_id, node_type, mention, label=None, url=None, statement=None):
         if not node_id:
             return
         if node_id not in nodes_map:
-            nodes_map[node_id] = {
+            display = (label or node_id)
+            node = {
                 "id": node_id,
-                "name": node_id,
+                "name": display,
                 "type": node_type or "Unknown",
                 "mention_count": neo_int(mention if mention is not None else 1),
             }
+            # Expose the source paper URL (used by the inspector drawer's
+            # "View paper" link), e.g. for Contribution nodes pointing back to
+            # the owning paper.
+            if url:
+                node["url"] = url
+            # The contribution's own one-line claim, shown in the drawer body
+            # (the node label itself is the owning paper's title).
+            if statement:
+                node["statement"] = statement
+            nodes_map[node_id] = node
 
     with get_driver().session() as session:
         relation_records = session.run(relation_cypher, limit=limit).data()
@@ -688,8 +718,8 @@ async def get_graph(limit: int = 120):
         # rather than collapsing every such edge into one shared "?" hub.
         if not s_id or not e_id:
             continue
-        add_node(s_id, rec.get("s_type"), rec.get("s_mention"))
-        add_node(e_id, rec.get("e_type"), rec.get("e_mention"))
+        add_node(s_id, rec.get("s_type"), rec.get("s_mention"), rec.get("s_label"), rec.get("s_url"), rec.get("s_statement"))
+        add_node(e_id, rec.get("e_type"), rec.get("e_mention"), rec.get("e_label"), rec.get("e_url"), rec.get("e_statement"))
         links.append({
             "source": s_id,
             "target": e_id,
@@ -704,8 +734,8 @@ async def get_graph(limit: int = 120):
         e_id = rec.get("e_name")
         if not s_id or not e_id:
             continue
-        add_node(s_id, rec.get("s_type"), rec.get("s_mention"))
-        add_node(e_id, rec.get("e_type"), rec.get("e_mention"))
+        add_node(s_id, rec.get("s_type"), rec.get("s_mention"), rec.get("s_label"), rec.get("s_url"), rec.get("s_statement"))
+        add_node(e_id, rec.get("e_type"), rec.get("e_mention"), rec.get("e_label"), rec.get("e_url"), rec.get("e_statement"))
         links.append({
             "source": s_id,
             "target": e_id,
@@ -717,6 +747,6 @@ async def get_graph(limit: int = 120):
 
     # Backfill isolated nodes (no rendered edge) so counts match /stats.
     for rec in isolated_records:
-        add_node(rec.get("name"), rec.get("type"), rec.get("mention"))
+        add_node(rec.get("name"), rec.get("type"), rec.get("mention"), rec.get("label"), rec.get("url"), rec.get("statement"))
 
     return GraphResponse(nodes=list(nodes_map.values()), links=links)
