@@ -7,7 +7,7 @@
 [![Vector Index](https://img.shields.io/badge/Vector_Index-Neo4j_Native-008CC1?style=flat-square&logo=neo4j&logoColor=white)](https://neo4j.com/docs/cypher-manual/current/indexes/semantic-indexes/vector-indexes/)
 [![Gemini](https://img.shields.io/badge/LLM-Gemini_2.5_Flash-228B22?style=flat-square&logo=google&logoColor=white)](https://deepmind.google/technologies/gemini/)
 [![ONNX](https://img.shields.io/badge/Embeddings-ONNX_Runtime-005CBB?style=flat-square&logo=onnx&logoColor=white)](https://onnxruntime.ai/)
-[![Live Demo](https://shields.io)](https://extraordinary-axolotl-c63e93.netlify.app/)
+
 
 
 <img width="812" height="541" alt="Self Evolving Research Agent" src="https://github.com/user-attachments/assets/ce20ad31-7171-4716-ba50-3a07ab22df79" />
