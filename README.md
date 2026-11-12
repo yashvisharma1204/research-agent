@@ -7,6 +7,8 @@
 [![Vector Index](https://img.shields.io/badge/Vector_Index-Neo4j_Native-008CC1?style=flat-square&logo=neo4j&logoColor=white)](https://neo4j.com/docs/cypher-manual/current/indexes/semantic-indexes/vector-indexes/)
 [![Gemini](https://img.shields.io/badge/LLM-Gemini_2.5_Flash-228B22?style=flat-square&logo=google&logoColor=white)](https://deepmind.google/technologies/gemini/)
 [![ONNX](https://img.shields.io/badge/Embeddings-ONNX_Runtime-005CBB?style=flat-square&logo=onnx&logoColor=white)](https://onnxruntime.ai/)
+[![Live Demo](https://shields.io)](https://extraordinary-axolotl-c63e93.netlify.app/)
+
 
 <img width="812" height="541" alt="Self Evolving Research Agent" src="https://github.com/user-attachments/assets/ce20ad31-7171-4716-ba50-3a07ab22df79" />
 
@@ -23,6 +25,14 @@ The **Self-Evolving Research Agent (Research Workbench)** is a production-grade,
 This platform bridges dense semantic vector retrieval with deterministic property graph topologies. It operates as an autonomous backend that ingests unstructured scientific literature (via arXiv, Semantic Scholar, RSS feeds, or raw payloads), parses semantic relationships into subject-predicate-object knowledge triples, builds an interconnected **Neo4j Knowledge Graph**, indexes dense embeddings directly in **Neo4j's native vector index** (computed locally via **ONNX Runtime**), and coordinates synthesis through **Google Gemini 2.5 Flash**.
 
 ---
+
+## Table of Contents
+- [Theoretical Foundations](#theoretical-foundations--system-philosophy)
+- [System Architecture](#system-architecture--micro-layers)
+- [Knowledge Graph Ontology](#knowledge-graph-schema--ontology)
+- [API Reference](#api-reference-specification)
+- [Environment & Setup](#environment-configuration--setup)
+
 
 ## Theoretical Foundations & System Philosophy
 
